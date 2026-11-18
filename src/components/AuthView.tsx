@@ -1,10 +1,58 @@
-import React, { useMemo, useState } from 'react';
-import { ExternalLink, Lock, LogIn, Mail, RefreshCw, ShieldCheck, UserPlus } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  AlertCircle,
+  ExternalLink,
+  Lock,
+  LogIn,
+  Mail,
+  RefreshCw,
+  ShieldCheck,
+  UserPlus,
+} from 'lucide-react';
 import { SEMESTERS } from '../data/subjects';
+import { googleOAuthClientId } from '../firebase';
+
+interface GoogleCredentialResponse {
+  credential?: string;
+}
+
+interface GoogleAccountsId {
+  initialize: (config: {
+    client_id: string;
+    callback: (response: GoogleCredentialResponse) => void;
+    auto_select?: boolean;
+    cancel_on_tap_outside?: boolean;
+    use_fedcm_for_prompt?: boolean;
+    itp_support?: boolean;
+  }) => void;
+  renderButton: (
+    parent: HTMLElement,
+    options: {
+      type?: 'standard' | 'icon';
+      theme?: 'outline' | 'filled_blue' | 'filled_black';
+      size?: 'large' | 'medium' | 'small';
+      text?: 'signin_with' | 'signup_with' | 'continue_with' | 'signin';
+      shape?: 'rectangular' | 'pill' | 'circle' | 'square';
+      width?: number;
+    },
+  ) => void;
+}
+
+declare global {
+  interface Window {
+    google?: {
+      accounts?: {
+        id?: GoogleAccountsId;
+      };
+    };
+  }
+}
 
 interface AuthViewProps {
   popupBlocked?: boolean;
+  popupIssueReason?: 'closed' | 'blocked' | null;
   onGoogleSignIn: () => Promise<void>;
+  onGoogleCredential?: (idToken: string) => Promise<void>;
   onGoogleRedirectSignIn: () => Promise<void>;
   onEmailSignIn: (email: string, password: string) => Promise<void>;
   onEmailRegister: (payload: {
@@ -19,7 +67,9 @@ interface AuthViewProps {
 
 export const AuthView: React.FC<AuthViewProps> = ({
   popupBlocked = false,
+  popupIssueReason = null,
   onGoogleSignIn,
+  onGoogleCredential,
   onGoogleRedirectSignIn,
   onEmailSignIn,
   onEmailRegister,
@@ -34,7 +84,108 @@ export const AuthView: React.FC<AuthViewProps> = ({
   const [semester, setSemester] = useState<string>(SEMESTERS[0]);
   const [submitting, setSubmitting] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [gisReady, setGisReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const gisButtonRef = useRef<HTMLDivElement | null>(null);
+  const emailInputRef = useRef<HTMLInputElement | null>(null);
+  const onCredentialRef = useRef(onGoogleCredential);
+  onCredentialRef.current = onGoogleCredential;
+
+  const isInIframe = useMemo(() => {
+    try {
+      return typeof window !== 'undefined' && window.self !== window.top;
+    } catch {
+      return true;
+    }
+  }, []);
+
+  const currentUrl = typeof window !== 'undefined' ? window.location.href : '/';
+
+  // Initialize Google Identity Services (FedCM / direct ID token without Firebase handler popup)
+  useEffect(() => {
+    if (!googleOAuthClientId || !onCredentialRef.current) return;
+    let cancelled = false;
+
+    const mountGisButton = () => {
+      if (cancelled || !gisButtonRef.current || !window.google?.accounts?.id) return;
+      try {
+        window.google.accounts.id.initialize({
+          client_id: googleOAuthClientId,
+          auto_select: false,
+          cancel_on_tap_outside: false,
+          use_fedcm_for_prompt: true,
+          itp_support: true,
+          callback: (resp: GoogleCredentialResponse) => {
+            if (!resp.credential || !onCredentialRef.current) return;
+            setError(null);
+            setGoogleLoading(true);
+            void onCredentialRef
+              .current(resp.credential)
+              .catch((err) => {
+                setError(err instanceof Error ? err.message : 'Google sign-in failed.');
+              })
+              .finally(() => setGoogleLoading(false));
+          },
+        });
+        gisButtonRef.current.innerHTML = '';
+        const isDark = document.documentElement.classList.contains('dark');
+        window.google.accounts.id.renderButton(gisButtonRef.current, {
+          type: 'standard',
+          theme: isDark ? 'filled_black' : 'outline',
+          size: 'large',
+          text: 'continue_with',
+          shape: 'rectangular',
+          width: 340,
+        });
+        setGisReady(true);
+      } catch {
+        setGisReady(false);
+      }
+    };
+
+    if (window.google?.accounts?.id) {
+      mountGisButton();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const existingScript = document.querySelector<HTMLScriptElement>(
+      'script[src="https://accounts.google.com/gsi/client"]',
+    );
+    if (existingScript) {
+      existingScript.addEventListener('load', mountGisButton);
+      return () => {
+        cancelled = true;
+        existingScript.removeEventListener('load', mountGisButton);
+      };
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = mountGisButton;
+    script.onerror = () => {
+      if (!cancelled) setGisReady(false);
+    };
+    document.head.appendChild(script);
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const triggerGooglePopup = () => {
+    setError(null);
+    setGoogleLoading(true);
+    void onGoogleSignIn()
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : 'Google sign-in failed.');
+      })
+      .finally(() => setGoogleLoading(false));
+  };
 
   const passwordScore = useMemo(() => {
     let score = 0;
@@ -142,54 +293,112 @@ export const AuthView: React.FC<AuthViewProps> = ({
           </button>
         </div>
 
-        {/* Primary Google Authentication */}
-        <button
-          type="button"
-          disabled={googleLoading}
-          onClick={() => {
-            setError(null);
-            setGoogleLoading(true);
-            void onGoogleSignIn()
-              .catch((err) =>
-                setError(err instanceof Error ? err.message : 'Google sign-in failed.'),
-              )
-              .finally(() => setGoogleLoading(false));
-          }}
-          className="mt-6 flex w-full items-center justify-center gap-2.5 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-800 transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
-        >
-          <ShieldCheck className="h-4 w-4 text-blue-700 dark:text-blue-400" />
-          {googleLoading ? 'Waiting for Google Sign-In...' : 'Continue with Google'}
-        </button>
+        {/* Google Identity Services Direct Sign-In (when available) + Firebase Popup Sign-In */}
+        <div className="mt-6 space-y-2.5">
+          <div
+            ref={gisButtonRef}
+            className={gisReady ? 'flex min-h-[42px] justify-center overflow-hidden' : 'hidden'}
+          />
 
-        {popupBlocked && (
-          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
-            <p className="font-semibold">Popup blocked or closed before completing sign-in</p>
-            <p className="mt-1 leading-relaxed">
-              Allow popups for this site in your browser bar, or sign in using one of the alternatives below:
-            </p>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setError(null);
-                  void onGoogleRedirectSignIn().catch((err) =>
-                    setError(err instanceof Error ? err.message : 'Redirect sign-in failed.'),
-                  );
-                }}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-amber-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-800 dark:bg-amber-700 dark:hover:bg-amber-600"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-                Try Redirect Sign-In
-              </button>
+          <button
+            type="button"
+            disabled={googleLoading}
+            onClick={triggerGooglePopup}
+            className={`flex w-full items-center justify-center gap-2.5 rounded-lg border px-4 py-2.5 text-sm font-medium transition-colors disabled:opacity-60 ${
+              gisReady
+                ? 'border-slate-200 bg-slate-50 text-xs text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-800'
+                : 'border-slate-300 bg-white text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700'
+            }`}
+          >
+            <ShieldCheck className="h-4 w-4 text-blue-700 dark:text-blue-400" />
+            {googleLoading
+              ? 'Completing Google Sign-In...'
+              : gisReady
+                ? 'Or Continue with Google Popup'
+                : 'Continue with Google'}
+          </button>
+
+          {isInIframe && !popupBlocked && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-[11px] text-slate-600 dark:border-slate-800 dark:bg-slate-950/60 dark:text-slate-400">
+              <span>
+                Running inside an embedded preview. Keep the Google popup open until it redirects back.
+              </span>
               <a
-                href={typeof window !== 'undefined' ? window.location.href : '/'}
+                href={currentUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-200 dark:hover:bg-slate-800"
+                className="inline-flex shrink-0 items-center gap-1 font-medium text-blue-700 hover:underline dark:text-blue-400"
               >
-                <ExternalLink className="h-3.5 w-3.5" />
+                <ExternalLink className="h-3 w-3" />
                 Open in New Tab
               </a>
+            </div>
+          )}
+        </div>
+
+        {popupBlocked && (
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400" />
+              <div className="flex-1">
+                <p className="font-semibold">
+                  {popupIssueReason === 'closed'
+                    ? 'Google popup closed before completing login'
+                    : 'Google sign-in popup was blocked by your browser'}
+                </p>
+                <p className="mt-1 leading-relaxed text-amber-900/90 dark:text-amber-200/90">
+                  {isInIframe
+                    ? 'Your browser or embedded preview frame interrupted the popup before Google could send back your session token. Open STUDORA in a full browser tab to sign in reliably, or retry and wait 2–3 seconds until the window closes automatically.'
+                    : 'Allow popups for this site and wait for the popup to close automatically after choosing your Google account, or use Redirect Sign-In below.'}
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {isInIframe && (
+                    <a
+                      href={currentUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-amber-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-800 dark:bg-amber-700 dark:hover:bg-amber-600"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      Open STUDORA in New Tab
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    disabled={googleLoading}
+                    onClick={triggerGooglePopup}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-60 ${
+                      isInIframe
+                        ? 'border border-amber-300 bg-white text-amber-950 hover:bg-amber-100 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-200 dark:hover:bg-slate-800'
+                        : 'bg-amber-900 text-white hover:bg-amber-800 dark:bg-amber-700 dark:hover:bg-amber-600'
+                    }`}
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Retry Google Popup
+                  </button>
+                  {!isInIframe && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setError(null);
+                        void onGoogleRedirectSignIn().catch((err) =>
+                          setError(err instanceof Error ? err.message : 'Redirect sign-in failed.'),
+                        );
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-950 hover:bg-amber-100 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-200 dark:hover:bg-slate-800"
+                    >
+                      Try Redirect Sign-In
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => emailInputRef.current?.focus()}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300/70 bg-transparent px-3 py-1.5 text-xs font-medium text-amber-950 hover:bg-amber-100/70 dark:border-amber-800 dark:text-amber-200 dark:hover:bg-slate-800"
+                  >
+                    Use Email &amp; Password
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -262,6 +471,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
             <div className="relative mt-1.5">
               <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
+                ref={emailInputRef}
                 type="email"
                 required
                 value={email}

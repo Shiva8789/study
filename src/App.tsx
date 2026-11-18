@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FirebaseError } from 'firebase/app';
 import {
+  browserPopupRedirectResolver,
   createUserWithEmailAndPassword,
   EmailAuthProvider,
   getRedirectResult,
+  GoogleAuthProvider,
   onAuthStateChanged,
   reauthenticateWithCredential,
   sendEmailVerification,
+  signInWithCredential,
   signInWithEmailAndPassword,
   signInWithPopup,
   signInWithRedirect,
@@ -114,7 +117,10 @@ export default function App() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [popupBlocked, setPopupBlocked] = useState(false);
+  const [popupIssueReason, setPopupIssueReason] = useState<'closed' | 'blocked' | null>(null);
   const googleSignInLockRef = useRef(false);
+  const activeSectionRef = useRef<ActiveSection>(activeSection);
+  activeSectionRef.current = activeSection;
 
   const [courses, setCourses] = useState<Course[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
@@ -260,12 +266,23 @@ export default function App() {
     return () => unsub();
   }, []);
 
+  // Auto-complete navigation if auth state resolves while on Auth page
+  useEffect(() => {
+    if (user && activeSection === 'auth') {
+      setPopupBlocked(false);
+      setPopupIssueReason(null);
+      setAuthError(null);
+      setActiveSection('dashboard');
+    }
+  }, [user, activeSection]);
+
   // Complete any redirect-based Google sign-in on return
   useEffect(() => {
-    void getRedirectResult(auth)
+    void getRedirectResult(auth, browserPopupRedirectResolver)
       .then((result) => {
         if (result?.user) {
           setPopupBlocked(false);
+          setPopupIssueReason(null);
           setAuthError(null);
           setActiveSection('dashboard');
         }
@@ -276,7 +293,10 @@ export default function App() {
             setAuthError(
               'This preview domain is not authorized for redirect login. Please open the app in a new tab or enable this domain in Firebase Console > Authentication > Settings > Authorized domains.',
             );
-          } else {
+          } else if (
+            err.code !== 'auth/popup-closed-by-user' &&
+            err.code !== 'auth/cancelled-popup-request'
+          ) {
             setAuthError(err.message);
           }
         }
@@ -493,36 +513,68 @@ export default function App() {
   }, [authReady, user?.uid, user?.role]);
 
   // Authentication Handlers
+  const handleGoogleCredential = useCallback(async (idToken: string) => {
+    setAuthError(null);
+    setPopupBlocked(false);
+    setPopupIssueReason(null);
+    const credential = GoogleAuthProvider.credential(idToken);
+    await signInWithCredential(auth, credential);
+    setActiveSection('dashboard');
+  }, []);
+
   const handleGoogleSignIn = useCallback(async () => {
     if (googleSignInLockRef.current) return;
     googleSignInLockRef.current = true;
     setAuthError(null);
     setPopupBlocked(false);
+    setPopupIssueReason(null);
+
     try {
-      await signInWithPopup(auth, googleProvider);
+      await signInWithPopup(auth, googleProvider, browserPopupRedirectResolver);
+      setPopupBlocked(false);
+      setPopupIssueReason(null);
       setActiveSection('dashboard');
     } catch (err) {
       const code = err instanceof FirebaseError ? err.code : '';
+
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        // Chrome COOP / iframe boundaries can sever window.opener right as OAuth finishes.
+        // Wait briefly to see if Firebase Auth finished signing in via onAuthStateChanged.
+        await new Promise((resolve) => setTimeout(resolve, 650));
+        if (auth.currentUser) {
+          setPopupBlocked(false);
+          setPopupIssueReason(null);
+          setAuthError(null);
+          setActiveSection('dashboard');
+          return;
+        }
+
+        setPopupBlocked(true);
+        setPopupIssueReason('closed');
+        if (activeSectionRef.current !== 'auth') {
+          setActiveSection('auth');
+          return;
+        }
+        return;
+      }
+
       if (code === 'auth/popup-blocked') {
         setPopupBlocked(true);
-        const msg =
-          'Sign-in popup was blocked by your browser or preview frame. Allow popups for this site, open STUDORA in a new tab, or try Redirect Sign-In below.';
-        setAuthError(msg);
-        throw new Error(msg);
+        setPopupIssueReason('blocked');
+        if (activeSectionRef.current !== 'auth') {
+          setActiveSection('auth');
+          return;
+        }
+        return;
       }
-      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
-        setPopupBlocked(true);
-        const msg =
-          'The Google sign-in popup was closed before completing login. Click "Continue with Google" again or use Redirect Sign-In / Open in New Tab.';
-        setAuthError(msg);
-        throw new Error(msg);
-      }
+
       if (code === 'auth/unauthorized-domain') {
         const msg =
           'This URL is not listed in Firebase Console > Authentication > Settings > Authorized domains.';
         setAuthError(msg);
         throw new Error(msg);
       }
+
       const msg = err instanceof Error ? err.message : 'Unable to complete Google sign-in.';
       setAuthError(msg);
       throw new Error(msg);
@@ -533,8 +585,21 @@ export default function App() {
 
   const handleGoogleRedirectSignIn = useCallback(async () => {
     setAuthError(null);
+    let inIframe = false;
     try {
-      await signInWithRedirect(auth, googleProvider);
+      inIframe = typeof window !== 'undefined' && window.self !== window.top;
+    } catch {
+      inIframe = true;
+    }
+
+    if (inIframe) {
+      throw new Error(
+        'Redirect sign-in cannot load inside an embedded preview frame because Google blocks iframe redirects. Click "Open in New Tab" first, then sign in.',
+      );
+    }
+
+    try {
+      await signInWithRedirect(auth, googleProvider, browserPopupRedirectResolver);
     } catch (err) {
       const msg =
         err instanceof Error
@@ -1358,7 +1423,9 @@ export default function App() {
       ) : activeSection === 'auth' ? (
         <AuthView
           popupBlocked={popupBlocked}
+          popupIssueReason={popupIssueReason}
           onGoogleSignIn={handleGoogleSignIn}
+          onGoogleCredential={handleGoogleCredential}
           onGoogleRedirectSignIn={handleGoogleRedirectSignIn}
           onEmailSignIn={handleEmailSignIn}
           onEmailRegister={handleEmailRegister}
