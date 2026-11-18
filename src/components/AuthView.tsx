@@ -1,9 +1,11 @@
 import React, { useMemo, useState } from 'react';
-import { Lock, LogIn, Mail, ShieldCheck, UserPlus } from 'lucide-react';
+import { ExternalLink, Lock, LogIn, Mail, RefreshCw, ShieldCheck, UserPlus } from 'lucide-react';
 import { SEMESTERS } from '../data/subjects';
 
 interface AuthViewProps {
+  popupBlocked?: boolean;
   onGoogleSignIn: () => Promise<void>;
+  onGoogleRedirectSignIn: () => Promise<void>;
   onEmailSignIn: (email: string, password: string) => Promise<void>;
   onEmailRegister: (payload: {
     name: string;
@@ -16,7 +18,9 @@ interface AuthViewProps {
 }
 
 export const AuthView: React.FC<AuthViewProps> = ({
+  popupBlocked = false,
   onGoogleSignIn,
+  onGoogleRedirectSignIn,
   onEmailSignIn,
   onEmailRegister,
   onCancel,
@@ -29,6 +33,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
   const [branch, setBranch] = useState('Computer Science & Engineering');
   const [semester, setSemester] = useState<string>(SEMESTERS[0]);
   const [submitting, setSubmitting] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const passwordScore = useMemo(() => {
@@ -140,17 +145,54 @@ export const AuthView: React.FC<AuthViewProps> = ({
         {/* Primary Google Authentication */}
         <button
           type="button"
+          disabled={googleLoading}
           onClick={() => {
             setError(null);
-            void onGoogleSignIn().catch((err) =>
-              setError(err instanceof Error ? err.message : 'Google sign-in failed.'),
-            );
+            setGoogleLoading(true);
+            void onGoogleSignIn()
+              .catch((err) =>
+                setError(err instanceof Error ? err.message : 'Google sign-in failed.'),
+              )
+              .finally(() => setGoogleLoading(false));
           }}
-          className="mt-6 flex w-full items-center justify-center gap-2.5 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-800 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+          className="mt-6 flex w-full items-center justify-center gap-2.5 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-800 transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
         >
           <ShieldCheck className="h-4 w-4 text-blue-700 dark:text-blue-400" />
-          Continue with Google
+          {googleLoading ? 'Waiting for Google Sign-In...' : 'Continue with Google'}
         </button>
+
+        {popupBlocked && (
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
+            <p className="font-semibold">Popup blocked or closed before completing sign-in</p>
+            <p className="mt-1 leading-relaxed">
+              Allow popups for this site in your browser bar, or sign in using one of the alternatives below:
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  void onGoogleRedirectSignIn().catch((err) =>
+                    setError(err instanceof Error ? err.message : 'Redirect sign-in failed.'),
+                  );
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-amber-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-800 dark:bg-amber-700 dark:hover:bg-amber-600"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Try Redirect Sign-In
+              </button>
+              <a
+                href={typeof window !== 'undefined' ? window.location.href : '/'}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-200 dark:hover:bg-slate-800"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                Open in New Tab
+              </a>
+            </div>
+          </div>
+        )}
 
         <div className="my-6 flex items-center gap-3">
           <span className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />

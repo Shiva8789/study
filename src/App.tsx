@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FirebaseError } from 'firebase/app';
 import {
   createUserWithEmailAndPassword,
   EmailAuthProvider,
+  getRedirectResult,
   onAuthStateChanged,
   reauthenticateWithCredential,
   sendEmailVerification,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
   updatePassword,
   updateProfile,
@@ -110,6 +113,8 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [popupBlocked, setPopupBlocked] = useState(false);
+  const googleSignInLockRef = useRef(false);
 
   const [courses, setCourses] = useState<Course[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
@@ -253,6 +258,29 @@ export default function App() {
     });
 
     return () => unsub();
+  }, []);
+
+  // Complete any redirect-based Google sign-in on return
+  useEffect(() => {
+    void getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) {
+          setPopupBlocked(false);
+          setAuthError(null);
+          setActiveSection('dashboard');
+        }
+      })
+      .catch((err) => {
+        if (err instanceof FirebaseError) {
+          if (err.code === 'auth/unauthorized-domain') {
+            setAuthError(
+              'This preview domain is not authorized for redirect login. Please open the app in a new tab or enable this domain in Firebase Console > Authentication > Settings > Authorized domains.',
+            );
+          } else {
+            setAuthError(err.message);
+          }
+        }
+      });
   }, []);
 
   // 2. Public Study Library listener (readable by ANY visitor)
@@ -466,12 +494,52 @@ export default function App() {
 
   // Authentication Handlers
   const handleGoogleSignIn = useCallback(async () => {
+    if (googleSignInLockRef.current) return;
+    googleSignInLockRef.current = true;
     setAuthError(null);
+    setPopupBlocked(false);
     try {
       await signInWithPopup(auth, googleProvider);
       setActiveSection('dashboard');
     } catch (err) {
+      const code = err instanceof FirebaseError ? err.code : '';
+      if (code === 'auth/popup-blocked') {
+        setPopupBlocked(true);
+        const msg =
+          'Sign-in popup was blocked by your browser or preview frame. Allow popups for this site, open STUDORA in a new tab, or try Redirect Sign-In below.';
+        setAuthError(msg);
+        throw new Error(msg);
+      }
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        setPopupBlocked(true);
+        const msg =
+          'The Google sign-in popup was closed before completing login. Click "Continue with Google" again or use Redirect Sign-In / Open in New Tab.';
+        setAuthError(msg);
+        throw new Error(msg);
+      }
+      if (code === 'auth/unauthorized-domain') {
+        const msg =
+          'This URL is not listed in Firebase Console > Authentication > Settings > Authorized domains.';
+        setAuthError(msg);
+        throw new Error(msg);
+      }
       const msg = err instanceof Error ? err.message : 'Unable to complete Google sign-in.';
+      setAuthError(msg);
+      throw new Error(msg);
+    } finally {
+      googleSignInLockRef.current = false;
+    }
+  }, []);
+
+  const handleGoogleRedirectSignIn = useCallback(async () => {
+    setAuthError(null);
+    try {
+      await signInWithRedirect(auth, googleProvider);
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'Unable to start Google redirect sign-in. Try opening the app in a new tab.';
       setAuthError(msg);
       throw new Error(msg);
     }
@@ -1289,7 +1357,9 @@ export default function App() {
         />
       ) : activeSection === 'auth' ? (
         <AuthView
+          popupBlocked={popupBlocked}
           onGoogleSignIn={handleGoogleSignIn}
+          onGoogleRedirectSignIn={handleGoogleRedirectSignIn}
           onEmailSignIn={handleEmailSignIn}
           onEmailRegister={handleEmailRegister}
           onCancel={() => setActiveSection('home')}
