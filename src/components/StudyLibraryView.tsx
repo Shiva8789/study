@@ -13,6 +13,21 @@ import {
 } from 'lucide-react';
 import { FILE_TYPES, SEMESTERS } from '../data/subjects';
 import type { ActiveSection, AuthUser, PublicContentItem, SubjectItem } from '../types';
+import { triggerResourceDownload, useResolvedFileUrl } from '../utils/firestoreFiles';
+
+const ResolvedImage: React.FC<{
+  filePath?: string;
+  originalName: string;
+  mimeType: string;
+  alt: string;
+  className: string;
+}> = ({ filePath, originalName, mimeType, alt, className }) => {
+  const src = useResolvedFileUrl(filePath, originalName, mimeType);
+  if (!src) {
+    return <div className="h-full w-full animate-pulse bg-slate-200 dark:bg-slate-800" />;
+  }
+  return <img src={src} alt={alt} referrerPolicy="no-referrer" className={className} />;
+};
 
 interface StudyLibraryViewProps {
   mode: 'public' | 'mine';
@@ -78,6 +93,12 @@ export const StudyLibraryView: React.FC<StudyLibraryViewProps> = ({
   const [editTopic, setEditTopic] = useState('');
   const [editContentText, setEditContentText] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
+
+  const previewUrl = useResolvedFileUrl(
+    previewItem?.filePath,
+    previewItem?.originalName,
+    previewItem?.mimeType,
+  );
 
   useEffect(() => {
     setSubjectFilter(initialSubjectFilter || 'all');
@@ -308,13 +329,7 @@ export const StudyLibraryView: React.FC<StudyLibraryViewProps> = ({
               user && (user.uid === item.ownerId || user.role === 'admin'),
             );
             const fileTypeLabel = (item.fileType || (item.kind === 'note' ? 'NOTE' : 'OTHER')).toUpperCase();
-            const downloadHref = item.filePath
-              ? `${item.filePath}?download=1&name=${encodeURIComponent(item.originalName)}&mime=${encodeURIComponent(item.mimeType)}`
-              : undefined;
-            const previewHref = item.filePath
-              ? `${item.filePath}?name=${encodeURIComponent(item.originalName)}&mime=${encodeURIComponent(item.mimeType)}`
-              : undefined;
-            const isImage = item.mimeType.startsWith('image/') && Boolean(previewHref);
+            const isImage = item.mimeType.startsWith('image/') && Boolean(item.filePath);
 
             return (
               <article
@@ -322,12 +337,13 @@ export const StudyLibraryView: React.FC<StudyLibraryViewProps> = ({
                 className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white transition-colors hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700"
               >
                 <div>
-                  {isImage && previewHref && (
+                  {isImage && item.filePath && (
                     <div className="aspect-[16/9] w-full overflow-hidden rounded-t-xl border-b border-slate-100 bg-slate-100 dark:border-slate-800 dark:bg-slate-950">
-                      <img
-                        src={previewHref}
+                      <ResolvedImage
+                        filePath={item.filePath}
+                        originalName={item.originalName}
+                        mimeType={item.mimeType}
                         alt={item.title}
-                        referrerPolicy="no-referrer"
                         className="h-full w-full object-cover"
                       />
                     </div>
@@ -384,15 +400,15 @@ export const StudyLibraryView: React.FC<StudyLibraryViewProps> = ({
                       Details
                     </button>
 
-                    {downloadHref && (
-                      <a
-                        href={downloadHref}
-                        download={item.originalName}
+                    {item.filePath && (
+                      <button
+                        type="button"
+                        onClick={() => void triggerResourceDownload(item)}
                         className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-700 hover:underline dark:text-blue-400"
                       >
                         <Download className="h-3.5 w-3.5" />
                         Download
-                      </a>
+                      </button>
                     )}
 
                     {item.kind === 'link' && item.url && (
@@ -476,10 +492,10 @@ export const StudyLibraryView: React.FC<StudyLibraryViewProps> = ({
                 </div>
               )}
 
-              {previewItem.filePath && previewItem.mimeType.startsWith('image/') && (
+              {previewItem.filePath && previewItem.mimeType.startsWith('image/') && previewUrl && (
                 <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-100 dark:border-slate-800 dark:bg-slate-950">
                   <img
-                    src={`${previewItem.filePath}?name=${encodeURIComponent(previewItem.originalName)}&mime=${encodeURIComponent(previewItem.mimeType)}`}
+                    src={previewUrl}
                     alt={previewItem.title}
                     referrerPolicy="no-referrer"
                     className="mx-auto max-h-[460px] object-contain"
@@ -487,26 +503,26 @@ export const StudyLibraryView: React.FC<StudyLibraryViewProps> = ({
                 </div>
               )}
 
-              {previewItem.filePath && previewItem.mimeType === 'application/pdf' && (
+              {previewItem.filePath && previewItem.mimeType === 'application/pdf' && previewUrl && (
                 <iframe
                   title={previewItem.title}
-                  src={`${previewItem.filePath}?name=${encodeURIComponent(previewItem.originalName)}&mime=${encodeURIComponent(previewItem.mimeType)}`}
+                  src={previewUrl}
                   className="h-[480px] w-full rounded-xl border border-slate-200 bg-white dark:border-slate-800"
                 />
               )}
 
-              {previewItem.filePath && previewItem.mimeType.startsWith('video/') && (
+              {previewItem.filePath && previewItem.mimeType.startsWith('video/') && previewUrl && (
                 <video
                   controls
-                  src={`${previewItem.filePath}?name=${encodeURIComponent(previewItem.originalName)}&mime=${encodeURIComponent(previewItem.mimeType)}`}
+                  src={previewUrl}
                   className="w-full rounded-xl border border-slate-200 dark:border-slate-800"
                 />
               )}
 
-              {previewItem.filePath && previewItem.mimeType.startsWith('audio/') && (
+              {previewItem.filePath && previewItem.mimeType.startsWith('audio/') && previewUrl && (
                 <audio
                   controls
-                  src={`${previewItem.filePath}?name=${encodeURIComponent(previewItem.originalName)}&mime=${encodeURIComponent(previewItem.mimeType)}`}
+                  src={previewUrl}
                   className="w-full"
                 />
               )}
@@ -533,14 +549,14 @@ export const StudyLibraryView: React.FC<StudyLibraryViewProps> = ({
                 </span>
                 <div className="flex items-center gap-3">
                   {previewItem.filePath && (
-                    <a
-                      href={`${previewItem.filePath}?download=1&name=${encodeURIComponent(previewItem.originalName)}&mime=${encodeURIComponent(previewItem.mimeType)}`}
-                      download={previewItem.originalName}
+                    <button
+                      type="button"
+                      onClick={() => void triggerResourceDownload(previewItem)}
                       className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2 text-xs font-medium text-white hover:bg-blue-800"
                     >
                       <Download className="h-3.5 w-3.5" />
                       Download File
-                    </a>
+                    </button>
                   )}
                   <button
                     type="button"

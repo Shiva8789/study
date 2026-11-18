@@ -50,6 +50,12 @@ import { UserProfileView } from './components/UserProfileView';
 import { AdminDashboardView, type DirectoryProfile } from './components/AdminDashboardView';
 import { AuthView } from './components/AuthView';
 import { TimeTravelBooth } from './components/TimeTravelBooth';
+import {
+  deleteFirestoreFileChunks,
+  isFirestoreFilePath,
+  MAX_FIRESTORE_FALLBACK_BYTES,
+  uploadBytesToFirestoreChunks,
+} from './utils/firestoreFiles';
 import type {
   ActiveSection,
   AuthUser,
@@ -1048,9 +1054,43 @@ export default function App() {
   };
 
   // Study Materials Upload & Library CRUD
-  const uploadSingleFileToServer = async (file: File): Promise<UploadedFileResult> => {
+  const uploadSingleFileToServer = async (
+    file: File,
+  ): Promise<UploadedFileResult & { rawBytesForFirestore?: Uint8Array }> => {
     const CHUNK_THRESHOLD = 12 * 1024 * 1024; // 12 MB
     const CHUNK_SIZE = 3 * 1024 * 1024; // 3 MB (~4 MB base64, well below Cloud Run 32 MB limit)
+
+    const fallbackToFirestore = async (): Promise<
+      UploadedFileResult & { rawBytesForFirestore?: Uint8Array }
+    > => {
+      if (isTextFallbackFile(file) && file.size <= 12000) {
+        const textContent = (await file.text()).slice(0, 12000);
+        return {
+          storedName: file.name,
+          originalName: file.name,
+          mimeType: file.type || 'text/plain',
+          fileType: inferFileType(file.name, file.type || 'text/plain', 'note'),
+          sizeBytes: file.size,
+          contentText: textContent,
+          kind: 'note',
+        };
+      }
+      if (file.size > MAX_FIRESTORE_FALLBACK_BYTES) {
+        throw new Error(
+          `"${file.name}" (${(file.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 15 MB cloud-direct upload limit.`,
+        );
+      }
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      return {
+        storedName: file.name,
+        originalName: file.name,
+        mimeType: file.type || 'application/octet-stream',
+        fileType: inferFileType(file.name, file.type || 'application/octet-stream', 'file'),
+        sizeBytes: file.size,
+        kind: 'file',
+        rawBytesForFirestore: bytes,
+      };
+    };
 
     if (file.size > CHUNK_THRESHOLD) {
       const uploadId = makeClientId('chk');
@@ -1081,10 +1121,8 @@ export default function App() {
           error?: string;
         }>(res);
 
-        if (!parsed.data) {
-          throw new Error(
-            `Upload server returned a non-JSON response (HTTP ${parsed.status}). Please retry in a moment.`,
-          );
+        if (!parsed.data || parsed.status === 404) {
+          return fallbackToFirestore();
         }
         if (!res.ok) {
           throw new Error(parsed.data.error || `Chunked upload failed (HTTP ${res.status}).`);
@@ -1114,32 +1152,14 @@ export default function App() {
     };
 
     let parsed = await attemptFormUpload();
-    // Retry once on transient proxy/restart non-JSON or 502/503/404 response
-    if (!parsed.data && (parsed.status === 404 || parsed.status >= 500)) {
-      await new Promise((r) => setTimeout(r, 700));
+    // Retry once on transient proxy/restart non-JSON or 5xx response (skip wait if 404 from static host)
+    if (!parsed.data && parsed.status >= 500) {
+      await new Promise((r) => setTimeout(r, 600));
       parsed = await attemptFormUpload();
     }
 
-    if (!parsed.data) {
-      // If backend upload endpoint is unavailable (e.g. static preview), still allow text/code/markdown files into Firestore
-      if (isTextFallbackFile(file)) {
-        const textContent = (await file.text()).slice(0, 12000);
-        return {
-          storedName: file.name,
-          originalName: file.name,
-          mimeType: file.type || 'text/plain',
-          fileType: inferFileType(file.name, file.type || 'text/plain', 'note'),
-          sizeBytes: file.size,
-          contentText: textContent,
-          kind: 'note',
-        };
-      }
-      const previewSnippet = parsed.rawText.replace(/<[^>]+>/g, ' ').trim().slice(0, 90);
-      throw new Error(
-        parsed.status === 404
-          ? 'File upload API (/api/files/upload) was not found on this host (HTTP 404). Open the live Node server URL or use "Write Educational Note".'
-          : `Upload failed with an unexpected server response (HTTP ${parsed.status}${previewSnippet ? `: ${previewSnippet}` : ''}).`,
-      );
+    if (!parsed.data || parsed.status === 404) {
+      return fallbackToFirestore();
     }
 
     if (!parsed.ok || !parsed.data.files || parsed.data.files.length === 0) {
@@ -1165,7 +1185,7 @@ export default function App() {
       return [];
     }
 
-    const uploadedResults: UploadedFileResult[] = [];
+    const uploadedResults: Array<UploadedFileResult & { rawBytesForFirestore?: Uint8Array }> = [];
     for (let i = 0; i < files.length; i++) {
       const result = await uploadSingleFileToServer(files[i]);
       uploadedResults.push(result);
@@ -1183,6 +1203,9 @@ export default function App() {
             : f.originalName;
       const courseTag = (meta.courseBranch || 'GENERAL').slice(0, 32) || 'GENERAL';
       const itemKind = f.kind === 'note' ? 'note' : 'file';
+      const resolvedFilePath = f.rawBytesForFirestore
+        ? `firestore://${id}`
+        : f.filePath;
 
       try {
         const record: Record<string, unknown> = {
@@ -1201,8 +1224,8 @@ export default function App() {
           mimeType: f.mimeType.slice(0, 120),
           sizeBytes: f.sizeBytes,
         };
-        if (f.filePath) {
-          record.filePath = f.filePath.slice(0, 300);
+        if (resolvedFilePath) {
+          record.filePath = resolvedFilePath.slice(0, 300);
         }
         if (typeof f.contentText === 'string') {
           record.contentText = f.contentText.slice(0, 12000);
@@ -1213,6 +1236,16 @@ export default function App() {
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
+
+        if (f.rawBytesForFirestore) {
+          try {
+            await uploadBytesToFirestoreChunks(id, user.uid, f.rawBytesForFirestore);
+          } catch (chunkErr) {
+            await deleteDoc(doc(db, 'publicContents', id)).catch(() => undefined);
+            throw chunkErr;
+          }
+        }
+
         void syncSupabase('/api/supabase/public-contents', 'POST', { id, ...record });
         createdIds.push(id);
       } catch (err) {
@@ -1319,6 +1352,9 @@ export default function App() {
 
   const handleDeletePublicContent = async (item: PublicContentItem) => {
     try {
+      if (isFirestoreFilePath(item.filePath)) {
+        await deleteFirestoreFileChunks(item.id).catch(() => undefined);
+      }
       await deleteDoc(doc(db, 'publicContents', item.id));
       void syncSupabase(`/api/supabase/public-contents/${encodeURIComponent(item.id)}`, 'DELETE');
       if (item.filePath && item.filePath.startsWith('/api/files/')) {
@@ -1341,6 +1377,8 @@ export default function App() {
     courseCode: string;
   }) => {
     if (!user) return;
+    const id = makeClientId('prt');
+
     const res = await fetch('/api/files/portrait', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1356,16 +1394,31 @@ export default function App() {
       filePath?: string;
       error?: string;
     }>(res);
-    const portraitFilePath = parsed.data?.filePath;
-    if (!parsed.ok || !portraitFilePath) {
-      throw new Error(
-        parsed.data?.error ||
-          `Failed to store portrait (HTTP ${parsed.status}). Make sure the backend server is running.`,
-      );
-    }
-    const fileData = parsed.data!;
 
-    const id = makeClientId('prt');
+    let portraitFilePath = parsed.data?.filePath;
+    let originalName = parsed.data?.originalName || `studora-${payload.eraId}.png`;
+    let mimeType = parsed.data?.mimeType || 'image/png';
+    let sizeBytes = parsed.data?.sizeBytes ?? 0;
+    let rawPortraitBytes: Uint8Array | null = null;
+
+    if (!parsed.data || parsed.status === 404) {
+      const match = payload.imageDataUrl.match(/^data:(image\/(?:png|jpeg|webp));base64,(.+)$/);
+      if (!match) {
+        throw new Error('Valid base64 portrait image is required.');
+      }
+      mimeType = match[1];
+      const ext = mimeType === 'image/jpeg' ? 'jpg' : mimeType === 'image/webp' ? 'webp' : 'png';
+      originalName = `studora-${payload.eraId}.${ext}`;
+      const bin = atob(match[2]);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      rawPortraitBytes = arr;
+      sizeBytes = arr.byteLength;
+      portraitFilePath = `firestore://${id}`;
+    } else if (!parsed.ok || !portraitFilePath) {
+      throw new Error(parsed.data.error || `Failed to store portrait (HTTP ${parsed.status}).`);
+    }
+
     const record = {
       ownerId: user.uid,
       authorName: user.displayName.slice(0, 80),
@@ -1380,9 +1433,9 @@ export default function App() {
       semester: 'General',
       topic: payload.eraLabel.slice(0, 120),
       fileType: 'IMAGE',
-      originalName: (fileData.originalName || 'portrait.png').slice(0, 200),
-      mimeType: (fileData.mimeType || 'image/png').slice(0, 120),
-      sizeBytes: fileData.sizeBytes ?? 0,
+      originalName: originalName.slice(0, 200),
+      mimeType: mimeType.slice(0, 120),
+      sizeBytes,
       filePath: portraitFilePath.slice(0, 300),
       eraLabel: payload.eraLabel.slice(0, 80),
     };
@@ -1392,6 +1445,14 @@ export default function App() {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+      if (rawPortraitBytes) {
+        try {
+          await uploadBytesToFirestoreChunks(id, user.uid, rawPortraitBytes);
+        } catch (chunkErr) {
+          await deleteDoc(doc(db, 'publicContents', id)).catch(() => undefined);
+          throw chunkErr;
+        }
+      }
       void syncSupabase('/api/supabase/public-contents', 'POST', { id, ...record });
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, `publicContents/${id}`);

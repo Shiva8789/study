@@ -10,6 +10,7 @@ import {
   UploadCloud,
 } from 'lucide-react';
 import type { ActiveSection, AuthUser, PublicContentItem, SubjectItem, TaskItem } from '../types';
+import { triggerResourceDownload } from '../utils/firestoreFiles';
 
 interface LandingHomeProps {
   user: AuthUser | null;
@@ -352,14 +353,14 @@ export const LandingHome: React.FC<LandingHomeProps> = ({
                         Open
                       </a>
                     ) : item.filePath ? (
-                      <a
-                        href={`${item.filePath}?download=1&name=${encodeURIComponent(item.originalName)}&mime=${encodeURIComponent(item.mimeType)}`}
-                        download={item.originalName}
+                      <button
+                        type="button"
+                        onClick={() => void triggerResourceDownload(item)}
                         className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 hover:underline dark:text-blue-400"
                       >
                         <Download className="h-3.5 w-3.5" />
                         Download
-                      </a>
+                      </button>
                     ) : null}
                   </div>
                 </div>

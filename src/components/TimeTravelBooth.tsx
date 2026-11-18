@@ -20,6 +20,26 @@ import type {
   HistoricalScene,
   PublicContentItem,
 } from '../types';
+import {
+  buildServerFileUrl,
+  isFirestoreFilePath,
+  resolveFirestoreFileUrl,
+  triggerResourceDownload,
+  useResolvedFileUrl,
+} from '../utils/firestoreFiles';
+
+const ResolvedPortraitImg: React.FC<{
+  filePath?: string;
+  originalName: string;
+  mimeType: string;
+  alt: string;
+}> = ({ filePath, originalName, mimeType, alt }) => {
+  const src = useResolvedFileUrl(filePath, originalName, mimeType);
+  if (!src) {
+    return <div className="h-full w-full animate-pulse bg-slate-200 dark:bg-slate-800" />;
+  }
+  return <img src={src} alt={alt} referrerPolicy="no-referrer" className="h-full w-full object-cover" />;
+};
 
 interface TimeTravelBoothProps {
   user: AuthUser | null;
@@ -664,18 +684,24 @@ export const TimeTravelBooth: React.FC<TimeTravelBoothProps> = ({
                     aria-label="Choose image from Public Content Hub"
                     value=""
                     onChange={(e) => {
-                      if (e.target.value) {
-                        setFacePhotoUrl(e.target.value);
+                      const chosenId = e.target.value;
+                      const chosen = imageVaultItems.find((img) => img.id === chosenId);
+                      if (!chosen?.filePath) return;
+                      if (isFirestoreFilePath(chosen.filePath)) {
+                        void resolveFirestoreFileUrl(chosen.filePath, chosen.mimeType).then((url) =>
+                          setFacePhotoUrl(url),
+                        );
+                      } else {
+                        setFacePhotoUrl(
+                          buildServerFileUrl(chosen.filePath, chosen.originalName, chosen.mimeType, false),
+                        );
                       }
                     }}
                     className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700"
                   >
                     <option value="">Use image from Hub...</option>
                     {imageVaultItems.map((img) => (
-                      <option
-                        key={img.id}
-                        value={`${img.filePath}?name=${encodeURIComponent(img.originalName)}&mime=${encodeURIComponent(img.mimeType)}`}
-                      >
+                      <option key={img.id} value={img.id}>
                         {img.title}
                       </option>
                     ))}
@@ -1018,7 +1044,6 @@ export const TimeTravelBooth: React.FC<TimeTravelBoothProps> = ({
         ) : (
           <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {savedPortraits.map((p) => {
-              const imgUrl = `${p.filePath}?name=${encodeURIComponent(p.originalName)}&mime=${encodeURIComponent(p.mimeType)}`;
               const canDelete = Boolean(user && (user.uid === p.ownerId || user.role === 'admin'));
               return (
                 <article
@@ -1026,11 +1051,11 @@ export const TimeTravelBooth: React.FC<TimeTravelBoothProps> = ({
                   className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
                 >
                   <div className="aspect-[4/3] w-full overflow-hidden bg-slate-100 dark:bg-slate-950">
-                    <img
-                      src={imgUrl}
+                    <ResolvedPortraitImg
+                      filePath={p.filePath}
+                      originalName={p.originalName}
+                      mimeType={p.mimeType}
                       alt={p.title}
-                      referrerPolicy="no-referrer"
-                      className="h-full w-full object-cover"
                     />
                   </div>
                   <div className="p-4">
@@ -1044,14 +1069,14 @@ export const TimeTravelBooth: React.FC<TimeTravelBoothProps> = ({
                       {p.description}
                     </p>
                     <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 dark:border-slate-800">
-                      <a
-                        href={`${p.filePath}?download=1&name=${encodeURIComponent(p.originalName)}&mime=${encodeURIComponent(p.mimeType)}`}
-                        download={p.originalName}
+                      <button
+                        type="button"
+                        onClick={() => void triggerResourceDownload(p)}
                         className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-700 hover:underline dark:text-blue-400"
                       >
                         <Download className="h-3.5 w-3.5" />
                         Download
-                      </a>
+                      </button>
                       {canDelete && (
                         <button
                           type="button"

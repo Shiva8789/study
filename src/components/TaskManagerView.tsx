@@ -11,6 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import type { AuthUser, Course, PublicContentItem, TaskItem } from '../types';
+import { triggerResourceDownload } from '../utils/firestoreFiles';
 
 interface TaskManagerViewProps {
   user: AuthUser | null;
@@ -594,18 +595,24 @@ export const TaskManagerView: React.FC<TaskManagerViewProps> = ({
                       if (!item) return null;
                       return (
                         <li key={aid} className="flex items-center justify-between gap-3 py-2.5">
-                          <a
-                            href={
-                              item.filePath
-                                ? `${item.filePath}?name=${encodeURIComponent(item.originalName)}&mime=${encodeURIComponent(item.mimeType)}`
-                                : item.url || '#'
-                            }
-                            target="_blank"
-                            rel="noreferrer"
-                            className="truncate text-xs font-medium text-blue-700 hover:underline dark:text-blue-400"
-                          >
-                            {item.title}
-                          </a>
+                          {item.filePath ? (
+                            <button
+                              type="button"
+                              onClick={() => void triggerResourceDownload(item)}
+                              className="truncate text-left text-xs font-medium text-blue-700 hover:underline dark:text-blue-400"
+                            >
+                              {item.title}
+                            </button>
+                          ) : (
+                            <a
+                              href={item.url || '#'}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="truncate text-xs font-medium text-blue-700 hover:underline dark:text-blue-400"
+                            >
+                              {item.title}
+                            </a>
+                          )}
                           {activeTask.status !== 'completed' && (
                             <button
                               type="button"

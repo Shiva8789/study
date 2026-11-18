@@ -144,6 +144,21 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidFileChunk(data, contentId) {
+      return data.keys().hasAll([
+          'contentId', 'ownerId', 'chunkIndex', 'totalChunks', 'dataBase64', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'contentId', 'ownerId', 'chunkIndex', 'totalChunks', 'dataBase64', 'createdAt'
+        ])
+        && data.contentId is string && data.contentId == contentId && isValidId(data.contentId)
+        && data.ownerId is string && isValidId(data.ownerId)
+        && data.chunkIndex is int && data.chunkIndex >= 0 && data.chunkIndex < 100
+        && data.totalChunks is int && data.totalChunks >= 1 && data.totalChunks <= 100
+        && data.dataBase64 is string && data.dataBase64.size() >= 1 && data.dataBase64.size() <= 700000
+        && data.createdAt is timestamp;
+    }
+
     // Admin marker collection
     match /admins/{adminId} {
       allow get: if isValidId(adminId) && isSignedIn() && (isOwner(adminId) || isAdmin());
@@ -302,6 +317,24 @@ service cloud.firestore {
           'semester', 'topic', 'contentText', 'url', 'updatedAt'
         ]);
       allow delete: if isValidId(contentId) && isSignedIn() && (existing().ownerId == request.auth.uid || isAdmin());
+
+      match /chunks/{chunkId} {
+        allow get: if isValidId(contentId) && isValidId(chunkId);
+        allow list: if true;
+        allow create: if isValidId(contentId)
+          && isValidId(chunkId)
+          && isSignedIn()
+          && isValidFileChunk(incoming(), contentId)
+          && incoming().ownerId == request.auth.uid
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/publicContents/$(contentId))
+          && get(/databases/$(database)/documents/publicContents/$(contentId)).data.ownerId == request.auth.uid;
+        allow update: if false;
+        allow delete: if isValidId(contentId)
+          && isValidId(chunkId)
+          && isSignedIn()
+          && (existing().ownerId == request.auth.uid || isAdmin());
+      }
     }
   }
 }

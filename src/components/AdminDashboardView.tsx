@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Download, Search, ShieldAlert, ShieldCheck, Trash2 } from 'lucide-react';
 import type { AuthUser, PublicContentItem, SubjectItem } from '../types';
+import { triggerResourceDownload } from '../utils/firestoreFiles';
 
 export interface DirectoryProfile {
   uid: string;
@@ -285,14 +286,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   <td className="py-2.5 pl-3 text-right">
                     <div className="inline-flex items-center gap-2">
                       {item.filePath && (
-                        <a
-                          href={`${item.filePath}?download=1&name=${encodeURIComponent(item.originalName)}&mime=${encodeURIComponent(item.mimeType)}`}
-                          download={item.originalName}
+                        <button
+                          type="button"
+                          onClick={() => void triggerResourceDownload(item)}
                           className="rounded p-1 text-blue-700 hover:bg-slate-100 dark:text-blue-400 dark:hover:bg-slate-800"
                           aria-label={`Download ${item.title}`}
                         >
                           <Download className="h-3.5 w-3.5" />
-                        </a>
+                        </button>
                       )}
                       <button
                         type="button"

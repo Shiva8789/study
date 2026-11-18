@@ -323,6 +323,48 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "PublicFileChunk": {
+      "title": "PublicFileChunk",
+      "description": "Base64-encoded binary file slice stored in Firestore when static hosting has no Express file upload endpoint.",
+      "type": "object",
+      "properties": {
+        "contentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "chunkIndex": {
+          "type": "integer"
+        },
+        "totalChunks": {
+          "type": "integer"
+        },
+        "dataBase64": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 700000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "contentId",
+        "ownerId",
+        "chunkIndex",
+        "totalChunks",
+        "dataBase64",
+        "createdAt"
+      ]
     }
   },
   "firestore": {
@@ -353,6 +395,10 @@
     "/publicContents/{contentId}": {
       "schema": { "$ref": "#/entities/PublicContent" },
       "description": "Publicly viewable uploaded study materials, notes, links, and portraits."
+    },
+    "/publicContents/{contentId}/chunks/{chunkId}": {
+      "schema": { "$ref": "#/entities/PublicFileChunk" },
+      "description": "Immutable binary chunks belonging to a publicContents document."
     }
   }
 }
