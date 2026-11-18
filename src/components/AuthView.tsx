@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   ExternalLink,
@@ -10,49 +10,11 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { SEMESTERS } from '../data/subjects';
-import { googleOAuthClientId } from '../firebase';
-
-interface GoogleCredentialResponse {
-  credential?: string;
-}
-
-interface GoogleAccountsId {
-  initialize: (config: {
-    client_id: string;
-    callback: (response: GoogleCredentialResponse) => void;
-    auto_select?: boolean;
-    cancel_on_tap_outside?: boolean;
-    use_fedcm_for_prompt?: boolean;
-    itp_support?: boolean;
-  }) => void;
-  renderButton: (
-    parent: HTMLElement,
-    options: {
-      type?: 'standard' | 'icon';
-      theme?: 'outline' | 'filled_blue' | 'filled_black';
-      size?: 'large' | 'medium' | 'small';
-      text?: 'signin_with' | 'signup_with' | 'continue_with' | 'signin';
-      shape?: 'rectangular' | 'pill' | 'circle' | 'square';
-      width?: number;
-    },
-  ) => void;
-}
-
-declare global {
-  interface Window {
-    google?: {
-      accounts?: {
-        id?: GoogleAccountsId;
-      };
-    };
-  }
-}
 
 interface AuthViewProps {
   popupBlocked?: boolean;
   popupIssueReason?: 'closed' | 'blocked' | null;
   onGoogleSignIn: () => Promise<void>;
-  onGoogleCredential?: (idToken: string) => Promise<void>;
   onGoogleRedirectSignIn: () => Promise<void>;
   onEmailSignIn: (email: string, password: string) => Promise<void>;
   onEmailRegister: (payload: {
@@ -69,7 +31,6 @@ export const AuthView: React.FC<AuthViewProps> = ({
   popupBlocked = false,
   popupIssueReason = null,
   onGoogleSignIn,
-  onGoogleCredential,
   onGoogleRedirectSignIn,
   onEmailSignIn,
   onEmailRegister,
@@ -84,13 +45,9 @@ export const AuthView: React.FC<AuthViewProps> = ({
   const [semester, setSemester] = useState<string>(SEMESTERS[0]);
   const [submitting, setSubmitting] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [gisReady, setGisReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const gisButtonRef = useRef<HTMLDivElement | null>(null);
   const emailInputRef = useRef<HTMLInputElement | null>(null);
-  const onCredentialRef = useRef(onGoogleCredential);
-  onCredentialRef.current = onGoogleCredential;
 
   const isInIframe = useMemo(() => {
     try {
@@ -101,81 +58,6 @@ export const AuthView: React.FC<AuthViewProps> = ({
   }, []);
 
   const currentUrl = typeof window !== 'undefined' ? window.location.href : '/';
-
-  // Initialize Google Identity Services (FedCM / direct ID token without Firebase handler popup)
-  useEffect(() => {
-    if (!googleOAuthClientId || !onCredentialRef.current) return;
-    let cancelled = false;
-
-    const mountGisButton = () => {
-      if (cancelled || !gisButtonRef.current || !window.google?.accounts?.id) return;
-      try {
-        window.google.accounts.id.initialize({
-          client_id: googleOAuthClientId,
-          auto_select: false,
-          cancel_on_tap_outside: false,
-          use_fedcm_for_prompt: true,
-          itp_support: true,
-          callback: (resp: GoogleCredentialResponse) => {
-            if (!resp.credential || !onCredentialRef.current) return;
-            setError(null);
-            setGoogleLoading(true);
-            void onCredentialRef
-              .current(resp.credential)
-              .catch((err) => {
-                setError(err instanceof Error ? err.message : 'Google sign-in failed.');
-              })
-              .finally(() => setGoogleLoading(false));
-          },
-        });
-        gisButtonRef.current.innerHTML = '';
-        const isDark = document.documentElement.classList.contains('dark');
-        window.google.accounts.id.renderButton(gisButtonRef.current, {
-          type: 'standard',
-          theme: isDark ? 'filled_black' : 'outline',
-          size: 'large',
-          text: 'continue_with',
-          shape: 'rectangular',
-          width: 340,
-        });
-        setGisReady(true);
-      } catch {
-        setGisReady(false);
-      }
-    };
-
-    if (window.google?.accounts?.id) {
-      mountGisButton();
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    const existingScript = document.querySelector<HTMLScriptElement>(
-      'script[src="https://accounts.google.com/gsi/client"]',
-    );
-    if (existingScript) {
-      existingScript.addEventListener('load', mountGisButton);
-      return () => {
-        cancelled = true;
-        existingScript.removeEventListener('load', mountGisButton);
-      };
-    }
-
-    const script = document.createElement('script');
-    script.src = 'https://accounts.google.com/gsi/client';
-    script.async = true;
-    script.defer = true;
-    script.onload = mountGisButton;
-    script.onerror = () => {
-      if (!cancelled) setGisReady(false);
-    };
-    document.head.appendChild(script);
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const triggerGooglePopup = () => {
     setError(null);
@@ -293,29 +175,16 @@ export const AuthView: React.FC<AuthViewProps> = ({
           </button>
         </div>
 
-        {/* Google Identity Services Direct Sign-In (when available) + Firebase Popup Sign-In */}
+        {/* Firebase Google Authentication */}
         <div className="mt-6 space-y-2.5">
-          <div
-            ref={gisButtonRef}
-            className={gisReady ? 'flex min-h-[42px] justify-center overflow-hidden' : 'hidden'}
-          />
-
           <button
             type="button"
             disabled={googleLoading}
             onClick={triggerGooglePopup}
-            className={`flex w-full items-center justify-center gap-2.5 rounded-lg border px-4 py-2.5 text-sm font-medium transition-colors disabled:opacity-60 ${
-              gisReady
-                ? 'border-slate-200 bg-slate-50 text-xs text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-800'
-                : 'border-slate-300 bg-white text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700'
-            }`}
+            className="flex w-full items-center justify-center gap-2.5 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-800 transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
           >
             <ShieldCheck className="h-4 w-4 text-blue-700 dark:text-blue-400" />
-            {googleLoading
-              ? 'Completing Google Sign-In...'
-              : gisReady
-                ? 'Or Continue with Google Popup'
-                : 'Continue with Google'}
+            {googleLoading ? 'Completing Google Sign-In...' : 'Continue with Google'}
           </button>
 
           {isInIframe && !popupBlocked && (

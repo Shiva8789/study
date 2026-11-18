@@ -5,11 +5,9 @@ import {
   createUserWithEmailAndPassword,
   EmailAuthProvider,
   getRedirectResult,
-  GoogleAuthProvider,
   onAuthStateChanged,
   reauthenticateWithCredential,
   sendEmailVerification,
-  signInWithCredential,
   signInWithEmailAndPassword,
   signInWithPopup,
   signInWithRedirect,
@@ -513,15 +511,6 @@ export default function App() {
   }, [authReady, user?.uid, user?.role]);
 
   // Authentication Handlers
-  const handleGoogleCredential = useCallback(async (idToken: string) => {
-    setAuthError(null);
-    setPopupBlocked(false);
-    setPopupIssueReason(null);
-    const credential = GoogleAuthProvider.credential(idToken);
-    await signInWithCredential(auth, credential);
-    setActiveSection('dashboard');
-  }, []);
-
   const handleGoogleSignIn = useCallback(async () => {
     if (googleSignInLockRef.current) return;
     googleSignInLockRef.current = true;
@@ -1425,7 +1414,6 @@ export default function App() {
           popupBlocked={popupBlocked}
           popupIssueReason={popupIssueReason}
           onGoogleSignIn={handleGoogleSignIn}
-          onGoogleCredential={handleGoogleCredential}
           onGoogleRedirectSignIn={handleGoogleRedirectSignIn}
           onEmailSignIn={handleEmailSignIn}
           onEmailRegister={handleEmailRegister}
