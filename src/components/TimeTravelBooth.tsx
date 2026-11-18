@@ -494,7 +494,13 @@ export const TimeTravelBooth: React.FC<TimeTravelBoothProps> = ({
           studentName: studentName.trim(),
         }),
       });
-      const data = (await res.json()) as { caption?: string; error?: string };
+      const raw = await res.text();
+      let data: { caption?: string; error?: string } = {};
+      try {
+        data = raw ? (JSON.parse(raw) as { caption?: string; error?: string }) : {};
+      } catch {
+        throw new Error(`Server returned an unexpected response (HTTP ${res.status}).`);
+      }
       if (!res.ok) {
         throw new Error(data.error || 'Could not draft archival caption.');
       }

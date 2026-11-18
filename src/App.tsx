@@ -88,6 +88,65 @@ function inferFileType(originalName: string, mimeType: string, kind: string): st
   return 'OTHER';
 }
 
+async function safeParseJson<T>(res: Response): Promise<{
+  ok: boolean;
+  status: number;
+  data: T | null;
+  rawText: string;
+}> {
+  const rawText = await res.text();
+  if (!rawText) {
+    return { ok: res.ok, status: res.status, data: null, rawText: '' };
+  }
+  try {
+    return { ok: res.ok, status: res.status, data: JSON.parse(rawText) as T, rawText };
+  } catch {
+    return { ok: false, status: res.status, data: null, rawText };
+  }
+}
+
+function uint8ToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const step = 0x8000;
+  for (let i = 0; i < bytes.length; i += step) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + step));
+  }
+  return btoa(binary);
+}
+
+const TEXT_FALLBACK_EXTENSIONS = new Set([
+  '.txt',
+  '.md',
+  '.csv',
+  '.json',
+  '.py',
+  '.java',
+  '.c',
+  '.cpp',
+  '.ts',
+  '.tsx',
+  '.html',
+  '.css',
+]);
+
+function isTextFallbackFile(file: File): boolean {
+  const lower = file.name.toLowerCase();
+  const dot = lower.lastIndexOf('.');
+  const ext = dot >= 0 ? lower.slice(dot) : '';
+  return TEXT_FALLBACK_EXTENSIONS.has(ext) || file.type.startsWith('text/');
+}
+
+interface UploadedFileResult {
+  storedName: string;
+  originalName: string;
+  mimeType: string;
+  fileType?: string;
+  sizeBytes: number;
+  filePath?: string;
+  contentText?: string;
+  kind?: 'file' | 'note';
+}
+
 async function syncSupabase(
   endpoint: string,
   method: 'POST' | 'PATCH' | 'DELETE',
@@ -989,6 +1048,107 @@ export default function App() {
   };
 
   // Study Materials Upload & Library CRUD
+  const uploadSingleFileToServer = async (file: File): Promise<UploadedFileResult> => {
+    const CHUNK_THRESHOLD = 12 * 1024 * 1024; // 12 MB
+    const CHUNK_SIZE = 3 * 1024 * 1024; // 3 MB (~4 MB base64, well below Cloud Run 32 MB limit)
+
+    if (file.size > CHUNK_THRESHOLD) {
+      const uploadId = makeClientId('chk');
+      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+      let finalResult: UploadedFileResult | null = null;
+
+      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+        const start = chunkIndex * CHUNK_SIZE;
+        const end = Math.min(file.size, start + CHUNK_SIZE);
+        const sliceBuf = await file.slice(start, end).arrayBuffer();
+        const dataBase64 = uint8ToBase64(new Uint8Array(sliceBuf));
+
+        const res = await fetch('/api/files/upload-chunk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            uploadId,
+            chunkIndex,
+            totalChunks,
+            originalName: file.name,
+            mimeType: file.type || 'application/octet-stream',
+            totalBytes: file.size,
+            dataBase64,
+          }),
+        });
+        const parsed = await safeParseJson<{
+          files?: UploadedFileResult[];
+          error?: string;
+        }>(res);
+
+        if (!parsed.data) {
+          throw new Error(
+            `Upload server returned a non-JSON response (HTTP ${parsed.status}). Please retry in a moment.`,
+          );
+        }
+        if (!res.ok) {
+          throw new Error(parsed.data.error || `Chunked upload failed (HTTP ${res.status}).`);
+        }
+        if (parsed.data.files && parsed.data.files[0]) {
+          finalResult = parsed.data.files[0];
+        }
+      }
+
+      if (!finalResult) {
+        throw new Error('Chunked upload did not return file metadata.');
+      }
+      return finalResult;
+    }
+
+    const attemptFormUpload = async () => {
+      const formData = new FormData();
+      formData.append('files', file);
+      const res = await fetch('/api/files/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      return safeParseJson<{
+        files?: UploadedFileResult[];
+        error?: string;
+      }>(res);
+    };
+
+    let parsed = await attemptFormUpload();
+    // Retry once on transient proxy/restart non-JSON or 502/503/404 response
+    if (!parsed.data && (parsed.status === 404 || parsed.status >= 500)) {
+      await new Promise((r) => setTimeout(r, 700));
+      parsed = await attemptFormUpload();
+    }
+
+    if (!parsed.data) {
+      // If backend upload endpoint is unavailable (e.g. static preview), still allow text/code/markdown files into Firestore
+      if (isTextFallbackFile(file)) {
+        const textContent = (await file.text()).slice(0, 12000);
+        return {
+          storedName: file.name,
+          originalName: file.name,
+          mimeType: file.type || 'text/plain',
+          fileType: inferFileType(file.name, file.type || 'text/plain', 'note'),
+          sizeBytes: file.size,
+          contentText: textContent,
+          kind: 'note',
+        };
+      }
+      const previewSnippet = parsed.rawText.replace(/<[^>]+>/g, ' ').trim().slice(0, 90);
+      throw new Error(
+        parsed.status === 404
+          ? 'File upload API (/api/files/upload) was not found on this host (HTTP 404). Open the live Node server URL or use "Write Educational Note".'
+          : `Upload failed with an unexpected server response (HTTP ${parsed.status}${previewSnippet ? `: ${previewSnippet}` : ''}).`,
+      );
+    }
+
+    if (!parsed.ok || !parsed.data.files || parsed.data.files.length === 0) {
+      throw new Error(parsed.data.error || `File upload failed (HTTP ${parsed.status}).`);
+    }
+
+    return parsed.data.files[0];
+  };
+
   const handleUploadStudyFiles = async (
     files: FileList,
     meta: {
@@ -1004,46 +1164,31 @@ export default function App() {
       setActiveSection('auth');
       return [];
     }
-    const formData = new FormData();
+
+    const uploadedResults: UploadedFileResult[] = [];
     for (let i = 0; i < files.length; i++) {
-      formData.append('files', files[i]);
-    }
-    const res = await fetch('/api/files/upload', {
-      method: 'POST',
-      body: formData,
-    });
-    const body = (await res.json()) as {
-      files?: Array<{
-        storedName: string;
-        originalName: string;
-        mimeType: string;
-        fileType?: string;
-        sizeBytes: number;
-        filePath: string;
-      }>;
-      error?: string;
-    };
-    if (!res.ok || !body.files) {
-      throw new Error(body.error || 'File upload failed');
+      const result = await uploadSingleFileToServer(files[i]);
+      uploadedResults.push(result);
     }
 
     const createdIds: string[] = [];
-    for (let i = 0; i < body.files.length; i++) {
-      const f = body.files[i];
+    for (let i = 0; i < uploadedResults.length; i++) {
+      const f = uploadedResults[i];
       const id = makeClientId('cnt');
       const docTitle =
-        body.files.length === 1 && meta.title
+        uploadedResults.length === 1 && meta.title
           ? meta.title
           : i === 0 && meta.title
             ? `${meta.title} (${i + 1})`
             : f.originalName;
       const courseTag = (meta.courseBranch || 'GENERAL').slice(0, 32) || 'GENERAL';
+      const itemKind = f.kind === 'note' ? 'note' : 'file';
 
       try {
-        const record = {
+        const record: Record<string, unknown> = {
           ownerId: user.uid,
           authorName: user.displayName.slice(0, 80),
-          kind: 'file',
+          kind: itemKind,
           title: docTitle.slice(0, 160),
           description: (meta.description || `Shared file (${f.mimeType})`).slice(0, 1000),
           courseCode: courseTag,
@@ -1051,12 +1196,18 @@ export default function App() {
           courseBranch: (meta.courseBranch || 'General').slice(0, 80),
           semester: (meta.semester || 'General').slice(0, 32),
           topic: (meta.topic || 'General').slice(0, 120),
-          fileType: (f.fileType || inferFileType(f.originalName, f.mimeType, 'file')).slice(0, 24),
+          fileType: (f.fileType || inferFileType(f.originalName, f.mimeType, itemKind)).slice(0, 24),
           originalName: f.originalName.slice(0, 200),
           mimeType: f.mimeType.slice(0, 120),
           sizeBytes: f.sizeBytes,
-          filePath: f.filePath.slice(0, 300),
         };
+        if (f.filePath) {
+          record.filePath = f.filePath.slice(0, 300);
+        }
+        if (typeof f.contentText === 'string') {
+          record.contentText = f.contentText.slice(0, 12000);
+        }
+
         await setDoc(doc(db, 'publicContents', id), {
           ...record,
           createdAt: serverTimestamp(),
@@ -1198,16 +1349,21 @@ export default function App() {
         eraId: payload.eraId,
       }),
     });
-    const fileData = (await res.json()) as {
+    const parsed = await safeParseJson<{
       originalName?: string;
       mimeType?: string;
       sizeBytes?: number;
       filePath?: string;
       error?: string;
-    };
-    if (!res.ok || !fileData.filePath) {
-      throw new Error(fileData.error || 'Failed to store portrait');
+    }>(res);
+    const portraitFilePath = parsed.data?.filePath;
+    if (!parsed.ok || !portraitFilePath) {
+      throw new Error(
+        parsed.data?.error ||
+          `Failed to store portrait (HTTP ${parsed.status}). Make sure the backend server is running.`,
+      );
     }
+    const fileData = parsed.data!;
 
     const id = makeClientId('prt');
     const record = {
@@ -1227,7 +1383,7 @@ export default function App() {
       originalName: (fileData.originalName || 'portrait.png').slice(0, 200),
       mimeType: (fileData.mimeType || 'image/png').slice(0, 120),
       sizeBytes: fileData.sizeBytes ?? 0,
-      filePath: fileData.filePath.slice(0, 300),
+      filePath: portraitFilePath.slice(0, 300),
       eraLabel: payload.eraLabel.slice(0, 80),
     };
     try {

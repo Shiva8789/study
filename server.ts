@@ -198,6 +198,108 @@ app.post(
   },
 );
 
+// Chunked single-file upload for large study materials (bypasses Cloud Run 32 MB single-request limit)
+const CHUNKS_DIR = path.join(STORAGE_ROOT, 'chunks');
+app.post('/api/files/upload-chunk', async (req: Request, res: Response) => {
+  try {
+    const body = req.body as {
+      uploadId?: string;
+      chunkIndex?: number;
+      totalChunks?: number;
+      originalName?: string;
+      mimeType?: string;
+      totalBytes?: number;
+      dataBase64?: string;
+    };
+
+    const uploadId = String(body.uploadId ?? '').replace(/[^a-zA-Z0-9_-]/g, '');
+    const chunkIndex = Number(body.chunkIndex);
+    const totalChunks = Number(body.totalChunks);
+    const originalName = path.basename(String(body.originalName ?? 'upload.bin'));
+    const mimeType = String(body.mimeType ?? 'application/octet-stream');
+    const totalBytes = Number(body.totalBytes ?? 0);
+    const dataBase64 = String(body.dataBase64 ?? '');
+
+    if (
+      !uploadId ||
+      !Number.isInteger(chunkIndex) ||
+      !Number.isInteger(totalChunks) ||
+      chunkIndex < 0 ||
+      totalChunks < 1 ||
+      chunkIndex >= totalChunks ||
+      !dataBase64
+    ) {
+      res.status(400).json({ error: 'Invalid upload chunk payload.' });
+      return;
+    }
+
+    const ext = path.extname(originalName).toLowerCase();
+    if (!ALLOWED_EXTENSIONS.has(ext)) {
+      res.status(400).json({
+        error: `Unsupported file extension "${ext || 'unknown'}". Allowed formats: PDF, DOCX, PPTX, images, notes, CSV, ZIP, and source code.`,
+      });
+      return;
+    }
+
+    if (totalBytes > MAX_FILE_BYTES) {
+      res.status(400).json({ error: 'File exceeds the 50 MB size limit.' });
+      return;
+    }
+
+    ensureStorageDirs();
+    const uploadChunkFolder = path.join(CHUNKS_DIR, uploadId);
+    await fsp.mkdir(uploadChunkFolder, { recursive: true });
+
+    const chunkBuf = Buffer.from(dataBase64, 'base64');
+    await fsp.writeFile(path.join(uploadChunkFolder, `${chunkIndex}.part`), chunkBuf);
+
+    if (chunkIndex < totalChunks - 1) {
+      res.json({ complete: false, receivedChunk: chunkIndex });
+      return;
+    }
+
+    const id = crypto.randomUUID().slice(0, 8);
+    const safe = sanitizeFilename(originalName);
+    const storedName = `${Date.now()}-${id}-${safe}`;
+    const finalPath = path.join(UPLOADS_DIR, storedName);
+
+    let assembledSize = 0;
+    const handle = await fsp.open(finalPath, 'w');
+    try {
+      for (let i = 0; i < totalChunks; i++) {
+        const partPath = path.join(uploadChunkFolder, `${i}.part`);
+        const partBuf = await fsp.readFile(partPath);
+        assembledSize += partBuf.length;
+        if (assembledSize > MAX_FILE_BYTES) {
+          throw new Error('File exceeds the 50 MB size limit.');
+        }
+        await handle.write(partBuf);
+      }
+    } finally {
+      await handle.close();
+      await fsp.rm(uploadChunkFolder, { recursive: true, force: true }).catch(() => undefined);
+    }
+
+    res.status(201).json({
+      complete: true,
+      files: [
+        {
+          storedName,
+          originalName,
+          mimeType,
+          fileType: classifyFileType(originalName, mimeType),
+          sizeBytes: assembledSize,
+          filePath: `/api/files/${encodeURIComponent(storedName)}`,
+        },
+      ],
+    });
+  } catch (err) {
+    res.status(400).json({
+      error: err instanceof Error ? err.message : 'Chunked upload failed.',
+    });
+  }
+});
+
 // Save rendered Time-Travel PNG portrait to disk
 app.post('/api/files/portrait', async (req: Request, res: Response) => {
   try {
@@ -612,6 +714,11 @@ app.post('/api/supabase/profiles', async (req: Request, res: Response) => {
   }
 });
 
+// Guarantee any unmatched /api/* route returns JSON instead of HTML/text
+app.all('/api/*', (_req: Request, res: Response) => {
+  res.status(404).json({ error: 'API endpoint not found.' });
+});
+
 // Multer & upload error handler
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof multer.MulterError) {
@@ -629,7 +736,7 @@ async function startServer(): Promise<void> {
   if (process.env.NODE_ENV === 'production') {
     const distDir = path.resolve(__dirname, 'dist');
     app.use(express.static(distDir));
-    app.get('/{*splat}', (_req, res) => {
+    app.get('*', (_req, res) => {
       res.sendFile(path.join(distDir, 'index.html'));
     });
   } else {
