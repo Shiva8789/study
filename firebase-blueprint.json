@@ -1,0 +1,358 @@
+{
+  "entities": {
+    "PublicUserProfile": {
+      "title": "PublicUserProfile",
+      "description": "Publicly visible non-PII student profile for attribution and academic metadata.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "branch": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "semester": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "bio": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "role": {
+          "type": "string",
+          "enum": ["student", "admin"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "displayName", "role", "createdAt", "updatedAt"]
+    },
+    "PrivateUserInfo": {
+      "title": "PrivateUserInfo",
+      "description": "Owner-only PII record storing verified email and account metadata.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 200
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "createdAt", "updatedAt"]
+    },
+    "Subject": {
+      "title": "Subject",
+      "description": "Custom or core academic subject category for organizing study materials.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "category": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "name", "createdAt", "updatedAt"]
+    },
+    "Course": {
+      "title": "Course",
+      "description": "An academic course owned by a signed-in student.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "instructor": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "term": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "color": {
+          "type": "string",
+          "maxLength": 16,
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "code", "title", "color", "createdAt", "updatedAt"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "A student assignment or study task belonging to a signed-in user.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "courseId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "dueDate": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 20
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["low", "medium", "high"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["todo", "in_progress", "completed"]
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "attachmentIds": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "title",
+        "courseId",
+        "dueDate",
+        "priority",
+        "status",
+        "notes",
+        "attachmentIds",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PublicContent": {
+      "title": "PublicContent",
+      "description": "Uploaded study materials, notes, links, and portraits visible in the public library.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["file", "note", "link", "portrait"]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "courseCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "subject": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "courseBranch": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "semester": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "topic": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "fileType": {
+          "type": "string",
+          "maxLength": 24
+        },
+        "originalName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "mimeType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "sizeBytes": {
+          "type": "number"
+        },
+        "filePath": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "contentText": {
+          "type": "string",
+          "maxLength": 12000
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "eraLabel": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "authorName",
+        "kind",
+        "title",
+        "description",
+        "courseCode",
+        "originalName",
+        "mimeType",
+        "sizeBytes",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/publicProfiles/{userId}": {
+      "schema": { "$ref": "#/entities/PublicUserProfile" },
+      "description": "Non-PII public profile directory for attribution and admin overview."
+    },
+    "/users/{userId}/public/profile": {
+      "schema": { "$ref": "#/entities/PublicUserProfile" },
+      "description": "Publicly readable display profile for creator attribution."
+    },
+    "/users/{userId}/private/info": {
+      "schema": { "$ref": "#/entities/PrivateUserInfo" },
+      "description": "Strictly owner-only PII record containing email."
+    },
+    "/subjects/{subjectId}": {
+      "schema": { "$ref": "#/entities/Subject" },
+      "description": "Publicly readable academic subject categories."
+    },
+    "/courses/{courseId}": {
+      "schema": { "$ref": "#/entities/Course" },
+      "description": "Student-owned academic courses."
+    },
+    "/tasks/{taskId}": {
+      "schema": { "$ref": "#/entities/Task" },
+      "description": "Student-owned assignment tasks."
+    },
+    "/publicContents/{contentId}": {
+      "schema": { "$ref": "#/entities/PublicContent" },
+      "description": "Publicly viewable uploaded study materials, notes, links, and portraits."
+    }
+  }
+}

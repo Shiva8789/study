@@ -1,0 +1,6 @@
+{
+  "name": "ChronicleDesk — Student Task Manager",
+  "description": "Full-stack Student Task Manager with unlimited content uploads, course organization, and an interactive Time-Travel Photo Booth for historical portrait compositing.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

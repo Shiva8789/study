@@ -1,0 +1,50 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    scroll-behavior: smooth;
+  }
+
+  h1, h2, h3, .font-display {
+    font-family: var(--font-display);
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.studora-canvas {
+  background-color: #eef3fa;
+  background-image:
+    radial-gradient(ellipse 75% 45% at 55% -5%, rgba(37, 99, 235, 0.10), transparent 70%),
+    radial-gradient(ellipse 50% 40% at 10% 95%, rgba(14, 116, 144, 0.06), transparent 65%),
+    radial-gradient(rgba(15, 23, 42, 0.045) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 24px 24px;
+}
+
+.dark .studora-canvas {
+  background-color: #080d1a;
+  background-image:
+    radial-gradient(ellipse 75% 45% at 55% -5%, rgba(59, 130, 246, 0.16), transparent 70%),
+    radial-gradient(ellipse 50% 40% at 10% 95%, rgba(20, 184, 166, 0.07), transparent 65%),
+    radial-gradient(rgba(148, 163, 184, 0.07) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 24px 24px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

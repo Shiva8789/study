@@ -1,0 +1,135 @@
+{
+  "courses": [
+    {
+      "id": "crs-hist-214",
+      "code": "HIST 214",
+      "title": "European Cultural Revolutions",
+      "instructor": "Prof. Clara Vance",
+      "term": "Fall 2026",
+      "color": "#1D4ED8",
+      "createdAt": "2026-11-18T14:18:55.967Z"
+    },
+    {
+      "id": "crs-cs-301",
+      "code": "CS 301",
+      "title": "Algorithms & Graph Theory",
+      "instructor": "Dr. Julian Park",
+      "term": "Fall 2026",
+      "color": "#0F766E",
+      "createdAt": "2026-11-18T14:18:55.967Z"
+    },
+    {
+      "id": "crs-bio-118",
+      "code": "BIO 118",
+      "title": "Cellular Architecture & Genetics",
+      "instructor": "Dr. Elena Rostova",
+      "term": "Fall 2026",
+      "color": "#B45309",
+      "createdAt": "2026-11-18T14:18:55.967Z"
+    },
+    {
+      "id": "crs-lit-205",
+      "code": "LIT 205",
+      "title": "Modernist Fiction & Archival Print",
+      "instructor": "Prof. Arthur Mercer",
+      "term": "Fall 2026",
+      "color": "#4338CA",
+      "createdAt": "2026-11-18T14:18:55.967Z"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "tsk-1",
+      "title": "Submit Renaissance Visual Culture Essay & Archival Portrait",
+      "courseId": "crs-hist-214",
+      "dueDate": "2026-11-20",
+      "priority": "high",
+      "status": "in_progress",
+      "notes": "Draft comparative analysis of 15th-century workshop lighting and attach historical portrait study.",
+      "attachmentIds": [
+        "upl-note-1"
+      ],
+      "createdAt": "2026-11-18T14:18:55.967Z",
+      "updatedAt": "2026-11-18T14:18:55.967Z"
+    },
+    {
+      "id": "tsk-2",
+      "title": "Implement Dijkstra & A* Pathfinding Problem Set 4",
+      "courseId": "crs-cs-301",
+      "dueDate": "2026-11-21",
+      "priority": "high",
+      "status": "todo",
+      "notes": "Verify runtime bounds on sparse weighted graphs and upload benchmark CSV.",
+      "attachmentIds": [
+        "upl-link-1"
+      ],
+      "createdAt": "2026-11-18T14:18:55.967Z",
+      "updatedAt": "2026-11-18T14:18:55.967Z"
+    },
+    {
+      "id": "tsk-3",
+      "title": "Annotate Mitosis Microscopy Lab Slides",
+      "courseId": "crs-bio-118",
+      "dueDate": "2026-11-23",
+      "priority": "medium",
+      "status": "todo",
+      "notes": "Upload high-resolution lab stain captures and phase annotations to Content Vault.",
+      "attachmentIds": [],
+      "createdAt": "2026-11-18T14:18:55.967Z",
+      "updatedAt": "2026-11-18T14:18:55.967Z"
+    },
+    {
+      "id": "tsk-4",
+      "title": "Prepare 1920s Paris Salon Seminar Presentation",
+      "courseId": "crs-lit-205",
+      "dueDate": "2026-11-25",
+      "priority": "medium",
+      "status": "todo",
+      "notes": "Gather expatriate literary magazine clippings and Jazz Age visual references.",
+      "attachmentIds": [],
+      "createdAt": "2026-11-18T14:18:55.967Z",
+      "updatedAt": "2026-11-18T14:18:55.967Z"
+    },
+    {
+      "id": "tsk-5",
+      "title": "Complete Roman Forum Epigraphy Reading Check",
+      "courseId": "crs-hist-214",
+      "dueDate": "2026-11-17",
+      "priority": "low",
+      "status": "completed",
+      "notes": "Summarized senatorial inscriptions and uploaded translation outline.",
+      "attachmentIds": [],
+      "createdAt": "2026-11-18T14:18:55.967Z",
+      "updatedAt": "2026-11-18T14:18:55.967Z"
+    }
+  ],
+  "uploads": [
+    {
+      "id": "upl-note-1",
+      "kind": "note",
+      "title": "Florentine Humanism Seminar Reading Notes",
+      "description": "Key primary-source passages comparing Pico della Mirandola and Renaissance astronomical guilds.",
+      "courseId": "crs-hist-214",
+      "originalName": "florentine-humanism-notes.md",
+      "storedName": "",
+      "mimeType": "text/markdown",
+      "sizeBytes": 642,
+      "contentText": "# Florentine Humanism & Civic Patronage\n\n- Medici scriptoria funded translations of classical Greek texts alongside empirical geometry.\n- Compare candlelight workshop iconography with northern guild portraits.\n- Include a period portrait study in the visual appendix.",
+      "createdAt": "2026-11-18T14:18:55.967Z"
+    },
+    {
+      "id": "upl-link-1",
+      "kind": "link",
+      "title": "MIT OpenCourseWare: Shortest Paths & Dijkstra Lecture",
+      "description": "Reference lecture notes on priority queues, Bellman-Ford, and negative cycle detection.",
+      "courseId": "crs-cs-301",
+      "originalName": "dijkstra-lecture-reference",
+      "storedName": "",
+      "mimeType": "text/uri-list",
+      "sizeBytes": 128,
+      "url": "https://ocw.mit.edu",
+      "createdAt": "2026-11-18T14:18:55.967Z"
+    }
+  ],
+  "portraits": []
+}

@@ -1,0 +1,106 @@
+import type { SubjectItem } from '../types';
+
+export const CORE_SUBJECTS: SubjectItem[] = [
+  {
+    id: 'sub-cs',
+    ownerId: 'system',
+    name: 'Computer Science',
+    category: 'Core Engineering',
+    description: 'Programming fundamentals, software engineering, architecture, and theory of computation.',
+    isCore: true,
+  },
+  {
+    id: 'sub-ds',
+    ownerId: 'system',
+    name: 'Data Structures',
+    category: 'Core Engineering',
+    description: 'Trees, graphs, heaps, dynamic programming, hashing, and algorithmic complexity.',
+    isCore: true,
+  },
+  {
+    id: 'sub-dbms',
+    ownerId: 'system',
+    name: 'Database Management System',
+    category: 'Systems & Data',
+    description: 'Relational algebra, SQL optimization, normalization, indexing, and transactions.',
+    isCore: true,
+  },
+  {
+    id: 'sub-os',
+    ownerId: 'system',
+    name: 'Operating System',
+    category: 'Systems & Data',
+    description: 'Process scheduling, virtual memory, concurrency, file systems, and kernel design.',
+    isCore: true,
+  },
+  {
+    id: 'sub-ai',
+    ownerId: 'system',
+    name: 'Artificial Intelligence',
+    category: 'Intelligence',
+    description: 'Heuristic search, knowledge representation, planning, and reasoning agents.',
+    isCore: true,
+  },
+  {
+    id: 'sub-ml',
+    ownerId: 'system',
+    name: 'Machine Learning',
+    category: 'Intelligence',
+    description: 'Supervised and unsupervised learning, neural networks, evaluation, and optimization.',
+    isCore: true,
+  },
+  {
+    id: 'sub-math',
+    ownerId: 'system',
+    name: 'Mathematics',
+    category: 'Foundations',
+    description: 'Linear algebra, discrete mathematics, multivariable calculus, and probability.',
+    isCore: true,
+  },
+  {
+    id: 'sub-phys',
+    ownerId: 'system',
+    name: 'Physics',
+    category: 'Natural Sciences',
+    description: 'Classical mechanics, electromagnetism, optics, and quantum principles.',
+    isCore: true,
+  },
+  {
+    id: 'sub-chem',
+    ownerId: 'system',
+    name: 'Chemistry',
+    category: 'Natural Sciences',
+    description: 'Organic reaction mechanisms, thermodynamics, bonding, and analytical methods.',
+    isCore: true,
+  },
+  {
+    id: 'sub-eng',
+    ownerId: 'system',
+    name: 'English',
+    category: 'Communication',
+    description: 'Academic writing, technical communication, rhetoric, and literary analysis.',
+    isCore: true,
+  },
+  {
+    id: 'sub-other',
+    ownerId: 'system',
+    name: 'Other Subjects',
+    category: 'General',
+    description: 'Interdisciplinary coursework, electives, seminar slides, and research guides.',
+    isCore: true,
+  },
+];
+
+export const SEMESTERS = [
+  'Semester 1',
+  'Semester 2',
+  'Semester 3',
+  'Semester 4',
+  'Semester 5',
+  'Semester 6',
+  'Semester 7',
+  'Semester 8',
+  'General',
+] as const;
+
+export const FILE_TYPES = ['PDF', 'DOCX', 'PPTX', 'IMAGE', 'NOTE', 'OTHER'] as const;
