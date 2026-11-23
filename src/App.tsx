@@ -54,7 +54,10 @@ import type {
   TaskItem,
 } from './types';
 
-const RUNTIME_ADMIN_EMAIL = 'shivac917067@gmail.com';
+const ADMIN_EMAILS = new Set([
+  'shivac917067@gmail.com',
+  'sc276309@gmail.com',
+]);
 
 function formatTimestamp(val: unknown): string {
   if (val instanceof Timestamp) {
@@ -165,7 +168,7 @@ export default function App() {
 
       const providerIds = fbUser.providerData.map((p) => p.providerId);
       const isEmailAdmin =
-        fbUser.emailVerified && fbUser.email?.toLowerCase() === RUNTIME_ADMIN_EMAIL;
+        fbUser.emailVerified && ADMIN_EMAILS.has((fbUser.email || '').toLowerCase());
 
       let resolvedRole: 'student' | 'admin' = isEmailAdmin ? 'admin' : 'student';
       let branch = 'Computer Science & Engineering';
@@ -195,6 +198,13 @@ export default function App() {
           if (typeof data.bio === 'string') bio = data.bio;
           if (data.role === 'admin' && fbUser.emailVerified) resolvedRole = 'admin';
 
+          if (resolvedRole === 'admin' && data.role !== 'admin') {
+            await updateDoc(publicRef, {
+              role: 'admin',
+              updatedAt: serverTimestamp(),
+            }).catch(() => undefined);
+          }
+
           const dirSnap = await getDoc(dirRef);
           if (!dirSnap.exists()) {
             await setDoc(dirRef, {
@@ -208,6 +218,11 @@ export default function App() {
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
             });
+          } else if (resolvedRole === 'admin' && dirSnap.data()?.role !== 'admin') {
+            await updateDoc(dirRef, {
+              role: 'admin',
+              updatedAt: serverTimestamp(),
+            }).catch(() => undefined);
           }
         } else {
           const newProfilePayload = {

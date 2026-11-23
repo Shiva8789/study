@@ -620,9 +620,9 @@ export const StudyModeView: React.FC<StudyModeViewProps> = ({
                   Administrator Access Required
                 </h3>
                 <p className="mt-1 text-xs leading-relaxed text-slate-700">
-                  {user.email.toLowerCase() === 'shivac917067@gmail.com' && !user.emailVerified
-                    ? 'Your administrator email (shivac917067@gmail.com) is not verified yet. Continue with Google to verify instantly or click the verification link in your inbox.'
-                    : `Signed in as ${user.email || user.displayName} (Student). Only the administrator account (shivac917067@gmail.com) can upload, edit, or delete Study Mode documents.`}
+                  {!user.emailVerified
+                    ? `Signed in as ${user.email || user.displayName}, but your email is not verified yet. Continue with Google to verify instantly or click the verification link in your inbox.`
+                    : `Signed in as ${user.email || user.displayName} (Student). Only the administrator account can upload, edit, or delete Study Mode documents.`}
                 </p>
                 {verifySent && (
                   <p className="mt-2 text-xs font-semibold text-green-700">
@@ -647,7 +647,7 @@ export const StudyModeView: React.FC<StudyModeViewProps> = ({
                     <LogIn className="h-3.5 w-3.5" />
                     <span>{authBusy ? 'Signing In...' : 'Sign In with Google'}</span>
                   </button>
-                  {user.email.toLowerCase() === 'shivac917067@gmail.com' && !user.emailVerified && (
+                  {!user.emailVerified && (
                     <button
                       type="button"
                       onClick={() => {
