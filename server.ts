@@ -130,7 +130,8 @@ function sanitizeFilename(name: string): string {
 function classifyFileType(originalName: string, mimeType: string): string {
   const ext = path.extname(originalName).toLowerCase();
   if (ext === '.pdf' || mimeType === 'application/pdf') return 'PDF';
-  if (ext === '.doc' || ext === '.docx' || mimeType.includes('wordprocessingml')) return 'DOCX';
+  if (ext === '.doc' || mimeType === 'application/msword') return 'DOC';
+  if (ext === '.docx' || mimeType.includes('wordprocessingml')) return 'DOCX';
   if (ext === '.ppt' || ext === '.pptx' || mimeType.includes('presentationml')) return 'PPTX';
   if (mimeType.startsWith('image/') || ['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(ext)) {
     return 'IMAGE';

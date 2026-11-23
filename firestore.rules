@@ -96,12 +96,13 @@ service cloud.firestore {
           'status', 'notes', 'attachmentIds', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'ownerId', 'title', 'courseId', 'dueDate', 'priority',
+          'ownerId', 'title', 'courseId', 'subject', 'dueDate', 'priority',
           'status', 'notes', 'attachmentIds', 'createdAt', 'updatedAt'
         ])
         && data.ownerId is string && isValidId(data.ownerId)
         && data.title is string && data.title.size() >= 1 && data.title.size() <= 180
         && data.courseId is string && isValidId(data.courseId)
+        && (!('subject' in data) || (data.subject is string && data.subject.size() <= 80))
         && data.dueDate is string && data.dueDate.size() >= 8 && data.dueDate.size() <= 20
         && data.priority in ['low', 'medium', 'high']
         && data.status in ['todo', 'in_progress', 'completed']
@@ -289,51 +290,48 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && (
           isAdmin() ||
-          (existing().status != 'completed' && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'courseId', 'dueDate', 'priority', 'status', 'notes', 'attachmentIds', 'updatedAt'])) ||
-          (existing().status == 'completed' && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'courseId', 'subject', 'dueDate', 'priority', 'status', 'notes', 'attachmentIds', 'updatedAt'])
         );
       allow delete: if isValidId(taskId) && isSignedIn() && (existing().ownerId == request.auth.uid || isAdmin());
     }
 
-    // Public Study Library: Any visitor can browse, preview & download; creators & admins manage uploads
+    // Study Mode (Public Study Library): Any visitor can browse, read & download; strictly Admin can upload, edit, replace, or delete
     match /publicContents/{contentId} {
       allow get: if isValidId(contentId);
       allow list: if true;
       allow create: if isValidId(contentId)
-        && isSignedIn()
+        && isAdmin()
         && isValidPublicContent(incoming())
         && incoming().ownerId == request.auth.uid
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
       allow update: if isValidId(contentId)
-        && isSignedIn()
+        && isAdmin()
         && isValidPublicContent(incoming())
-        && (existing().ownerId == request.auth.uid || isAdmin())
         && incoming().ownerId == existing().ownerId
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly([
           'title', 'description', 'courseCode', 'subject', 'courseBranch',
-          'semester', 'topic', 'contentText', 'url', 'updatedAt'
+          'semester', 'topic', 'fileType', 'originalName', 'mimeType',
+          'sizeBytes', 'filePath', 'contentText', 'url', 'updatedAt'
         ]);
-      allow delete: if isValidId(contentId) && isSignedIn() && (existing().ownerId == request.auth.uid || isAdmin());
+      allow delete: if isValidId(contentId) && isAdmin();
 
       match /chunks/{chunkId} {
         allow get: if isValidId(contentId) && isValidId(chunkId);
         allow list: if true;
         allow create: if isValidId(contentId)
           && isValidId(chunkId)
-          && isSignedIn()
+          && isAdmin()
           && isValidFileChunk(incoming(), contentId)
           && incoming().ownerId == request.auth.uid
           && incoming().createdAt == request.time
-          && exists(/databases/$(database)/documents/publicContents/$(contentId))
-          && get(/databases/$(database)/documents/publicContents/$(contentId)).data.ownerId == request.auth.uid;
+          && exists(/databases/$(database)/documents/publicContents/$(contentId));
         allow update: if false;
         allow delete: if isValidId(contentId)
           && isValidId(chunkId)
-          && isSignedIn()
-          && (existing().ownerId == request.auth.uid || isAdmin());
+          && isAdmin();
       }
     }
   }

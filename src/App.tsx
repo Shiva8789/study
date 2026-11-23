@@ -1,18 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { FirebaseError } from 'firebase/app';
 import {
   browserPopupRedirectResolver,
   createUserWithEmailAndPassword,
-  EmailAuthProvider,
   getRedirectResult,
   onAuthStateChanged,
-  reauthenticateWithCredential,
   sendEmailVerification,
   signInWithEmailAndPassword,
   signInWithPopup,
   signInWithRedirect,
   signOut,
-  updatePassword,
   updateProfile,
 } from 'firebase/auth';
 import {
@@ -28,7 +25,6 @@ import {
   Timestamp,
   updateDoc,
   where,
-  writeBatch,
 } from 'firebase/firestore';
 import {
   auth,
@@ -37,21 +33,16 @@ import {
   handleFirestoreError,
   OperationType,
 } from './firebase';
-import { CORE_SUBJECTS, SEMESTERS } from './data/subjects';
+import { SEMESTERS } from './data/subjects';
 import { AppShell } from './components/AppShell';
-import { LandingHome } from './components/LandingHome';
-import { StudentDashboard } from './components/StudentDashboard';
+import { DashboardView } from './components/DashboardView';
 import { TaskManagerView } from './components/TaskManagerView';
-import { CalendarView } from './components/CalendarView';
-import { StudyLibraryView } from './components/StudyLibraryView';
-import { UploadMaterialView } from './components/UploadMaterialView';
-import { ExploreSubjectsView } from './components/ExploreSubjectsView';
-import { UserProfileView } from './components/UserProfileView';
-import { AdminDashboardView, type DirectoryProfile } from './components/AdminDashboardView';
+import { StudyModeView } from './components/StudyModeView';
+import { DocumentReaderModal } from './components/DocumentReaderModal';
 import { AuthView } from './components/AuthView';
-import { TimeTravelBooth } from './components/TimeTravelBooth';
 import {
   deleteFirestoreFileChunks,
+  invalidateResolvedFileCache,
   isFirestoreFilePath,
   MAX_FIRESTORE_FALLBACK_BYTES,
   uploadBytesToFirestoreChunks,
@@ -59,9 +50,7 @@ import {
 import type {
   ActiveSection,
   AuthUser,
-  Course,
   PublicContentItem,
-  SubjectItem,
   TaskItem,
 } from './types';
 
@@ -84,9 +73,8 @@ function inferFileType(originalName: string, mimeType: string, kind: string): st
   if (kind === 'portrait' || mimeType.startsWith('image/')) return 'IMAGE';
   const lower = originalName.toLowerCase();
   if (lower.endsWith('.pdf') || mimeType === 'application/pdf') return 'PDF';
-  if (lower.endsWith('.doc') || lower.endsWith('.docx') || mimeType.includes('wordprocessingml')) {
-    return 'DOCX';
-  }
+  if (lower.endsWith('.doc') || mimeType === 'application/msword') return 'DOC';
+  if (lower.endsWith('.docx') || mimeType.includes('wordprocessingml')) return 'DOCX';
   if (lower.endsWith('.ppt') || lower.endsWith('.pptx') || mimeType.includes('presentationml')) {
     return 'PPTX';
   }
@@ -120,28 +108,6 @@ function uint8ToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-const TEXT_FALLBACK_EXTENSIONS = new Set([
-  '.txt',
-  '.md',
-  '.csv',
-  '.json',
-  '.py',
-  '.java',
-  '.c',
-  '.cpp',
-  '.ts',
-  '.tsx',
-  '.html',
-  '.css',
-]);
-
-function isTextFallbackFile(file: File): boolean {
-  const lower = file.name.toLowerCase();
-  const dot = lower.lastIndexOf('.');
-  const ext = dot >= 0 ? lower.slice(dot) : '';
-  return TEXT_FALLBACK_EXTENSIONS.has(ext) || file.type.startsWith('text/');
-}
-
 interface UploadedFileResult {
   storedName: string;
   originalName: string;
@@ -165,16 +131,12 @@ async function syncSupabase(
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
-    // Non-fatal mirror sync when offline or key unconfigured
+    // Non-fatal mirror sync when offline or unconfigured
   }
 }
 
 export default function App() {
-  const [activeSection, setActiveSection] = useState<ActiveSection>('home');
-  const [darkMode, setDarkMode] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return window.localStorage.getItem('studora_dark_mode') === 'true';
-  });
+  const [activeSection, setActiveSection] = useState<ActiveSection>('dashboard');
 
   const [authReady, setAuthReady] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -185,40 +147,18 @@ export default function App() {
   const activeSectionRef = useRef<ActiveSection>(activeSection);
   activeSectionRef.current = activeSection;
 
-  const [courses, setCourses] = useState<Course[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [publicContents, setPublicContents] = useState<PublicContentItem[]>([]);
-  const [customSubjects, setCustomSubjects] = useState<SubjectItem[]>([]);
-  const [directoryProfiles, setDirectoryProfiles] = useState<DirectoryProfile[]>([]);
+  const [openAddTaskTrigger, setOpenAddTaskTrigger] = useState(0);
+  const [openUploadTrigger, setOpenUploadTrigger] = useState(0);
+  const [readingMaterial, setReadingMaterial] = useState<PublicContentItem | null>(null);
 
-  const [showCreateTaskModal, setShowCreateTaskModal] = useState(false);
-  const [librarySubjectFilter, setLibrarySubjectFilter] = useState<string>('all');
-  const [selectedLibraryResource, setSelectedLibraryResource] = useState<PublicContentItem | null>(
-    null,
-  );
-
-  // Sync Tailwind dark mode class
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', darkMode);
-    window.localStorage.setItem('studora_dark_mode', String(darkMode));
-  }, [darkMode]);
-
-  const allSubjects = useMemo(() => {
-    const existingNames = new Set(CORE_SUBJECTS.map((s) => s.name.toLowerCase()));
-    const filteredCustom = customSubjects.filter(
-      (s) => !existingNames.has(s.name.toLowerCase()),
-    );
-    return [...CORE_SUBJECTS, ...filteredCustom];
-  }, [customSubjects]);
-
-  // 1. Auth state listener & Split-PII + Directory profile sync
+  // 1. Auth state listener & Split-PII + Directory profile sync (UNCHANGED LOGIN SYSTEM)
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
       if (!fbUser) {
         setUser(null);
-        setCourses([]);
         setTasks([]);
-        setDirectoryProfiles([]);
         setAuthReady(true);
         return;
       }
@@ -255,7 +195,6 @@ export default function App() {
           if (typeof data.bio === 'string') bio = data.bio;
           if (data.role === 'admin' && fbUser.emailVerified) resolvedRole = 'admin';
 
-          // Keep directory entry present
           const dirSnap = await getDoc(dirRef);
           if (!dirSnap.exists()) {
             await setDoc(dirRef, {
@@ -366,7 +305,7 @@ export default function App() {
       });
   }, []);
 
-  // 2. Public Study Library listener (readable by ANY visitor)
+  // 2. Public Study Library listener (readable by ANY visitor without login)
   useEffect(() => {
     if (!authReady) return;
     const q = query(collection(db, 'publicContents'), orderBy('createdAt', 'desc'));
@@ -381,16 +320,16 @@ export default function App() {
           return {
             id: d.id,
             ownerId: String(data.ownerId ?? ''),
-            authorName: String(data.authorName ?? 'Student'),
+            authorName: String(data.authorName ?? 'Admin'),
             kind,
             title: String(data.title ?? ''),
             description: String(data.description ?? ''),
-            courseCode: String(data.courseCode ?? 'GENERAL'),
-            subject: String(data.subject ?? 'Other Subjects'),
+            courseCode: String(data.courseCode ?? 'STUDY'),
+            subject: String(data.subject ?? 'General'),
             courseBranch: String(data.courseBranch ?? data.courseCode ?? 'General'),
             semester: String(data.semester ?? 'General'),
-            topic: String(data.topic ?? 'General'),
-            fileType: String(data.fileType ?? inferFileType(originalName, mimeType, kind)),
+            topic: String(data.topic ?? ''),
+            fileType: inferFileType(originalName, mimeType, kind),
             originalName,
             mimeType,
             sizeBytes: Number(data.sizeBytes ?? 0),
@@ -408,106 +347,12 @@ export default function App() {
       },
     );
 
-    // Also hydrate any records stored directly in Supabase REST API if configured
-    void fetch('/api/supabase/public-contents')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((res: { configured?: boolean; items?: Array<Record<string, unknown>> } | null) => {
-        if (!res?.configured || !Array.isArray(res.items) || res.items.length === 0) return;
-        setPublicContents((prev) => {
-          const existingIds = new Set(prev.map((p) => p.id));
-          const extra: PublicContentItem[] = [];
-          for (const row of res.items!) {
-            const id = String(row.id ?? '');
-            if (!id || existingIds.has(id)) continue;
-            extra.push({
-              id,
-              ownerId: String(row.owner_id ?? ''),
-              authorName: String(row.author_name ?? 'Student'),
-              kind: (row.kind as PublicContentItem['kind']) ?? 'file',
-              title: String(row.title ?? ''),
-              description: String(row.description ?? ''),
-              courseCode: String(row.course_code ?? 'GENERAL'),
-              subject: String(row.subject ?? 'Other Subjects'),
-              courseBranch: String(row.course_branch ?? 'General'),
-              semester: String(row.semester ?? 'General'),
-              topic: String(row.topic ?? 'General'),
-              fileType: String(row.file_type ?? 'OTHER'),
-              originalName: String(row.original_name ?? 'file'),
-              mimeType: String(row.mime_type ?? 'application/octet-stream'),
-              sizeBytes: Number(row.size_bytes ?? 0),
-              filePath: typeof row.file_path === 'string' ? row.file_path : undefined,
-              contentText: typeof row.content_text === 'string' ? row.content_text : undefined,
-              url: typeof row.url === 'string' ? row.url : undefined,
-              eraLabel: typeof row.era_label === 'string' ? row.era_label : undefined,
-              createdAt: String(row.created_at ?? new Date().toISOString()),
-            });
-          }
-          return extra.length > 0 ? [...prev, ...extra] : prev;
-        });
-      })
-      .catch(() => undefined);
-
     return () => unsub();
   }, [authReady]);
 
-  // 3. Public Custom Subjects listener
-  useEffect(() => {
-    if (!authReady) return;
-    const q = query(collection(db, 'subjects'), orderBy('createdAt', 'desc'));
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const items: SubjectItem[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            ownerId: String(data.ownerId ?? ''),
-            name: String(data.name ?? ''),
-            category: String(data.category ?? 'Custom Subject'),
-            description: String(data.description ?? ''),
-            isCore: false,
-          };
-        });
-        setCustomSubjects(items);
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.LIST, 'subjects');
-      },
-    );
-    return () => unsub();
-  }, [authReady]);
-
-  // 4. Private Courses & Tasks listeners (strictly when signed in)
+  // 3. Private Tasks listener (strictly when signed in)
   useEffect(() => {
     if (!authReady || !user) return;
-
-    const coursesQuery = query(
-      collection(db, 'courses'),
-      where('ownerId', '==', user.uid),
-    );
-    const unsubCourses = onSnapshot(
-      coursesQuery,
-      (snap) => {
-        const items: Course[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            ownerId: String(data.ownerId ?? ''),
-            code: String(data.code ?? ''),
-            title: String(data.title ?? ''),
-            instructor: String(data.instructor ?? ''),
-            term: String(data.term ?? 'Fall 2026'),
-            color: String(data.color ?? '#1D4ED8'),
-            createdAt: formatTimestamp(data.createdAt),
-          };
-        });
-        items.sort((a, b) => a.code.localeCompare(b.code));
-        setCourses(items);
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.LIST, 'courses');
-      },
-    );
 
     const tasksQuery = query(
       collection(db, 'tasks'),
@@ -523,6 +368,7 @@ export default function App() {
             ownerId: String(data.ownerId ?? ''),
             title: String(data.title ?? ''),
             courseId: String(data.courseId ?? 'general'),
+            subject: String(data.subject ?? 'General'),
             dueDate: String(data.dueDate ?? ''),
             priority: (data.priority as TaskItem['priority']) ?? 'medium',
             status: (data.status as TaskItem['status']) ?? 'todo',
@@ -543,39 +389,11 @@ export default function App() {
     );
 
     return () => {
-      unsubCourses();
       unsubTasks();
     };
   }, [authReady, user?.uid]);
 
-  // 5. Admin Directory listener (strictly admin role)
-  useEffect(() => {
-    if (!authReady || !user || user.role !== 'admin') return;
-    const unsub = onSnapshot(
-      collection(db, 'publicProfiles'),
-      (snap) => {
-        const list: DirectoryProfile[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            uid: String(data.uid ?? d.id),
-            displayName: String(data.displayName ?? 'Student'),
-            branch: String(data.branch ?? 'General'),
-            semester: String(data.semester ?? 'General'),
-            role: data.role === 'admin' ? 'admin' : 'student',
-            createdAt: formatTimestamp(data.createdAt),
-          };
-        });
-        list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-        setDirectoryProfiles(list);
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.LIST, 'publicProfiles');
-      },
-    );
-    return () => unsub();
-  }, [authReady, user?.uid, user?.role]);
-
-  // Authentication Handlers
+  // Authentication Handlers (UNCHANGED LOGIN SYSTEM)
   const handleGoogleSignIn = useCallback(async () => {
     if (googleSignInLockRef.current) return;
     googleSignInLockRef.current = true;
@@ -592,8 +410,6 @@ export default function App() {
       const code = err instanceof FirebaseError ? err.code : '';
 
       if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
-        // Chrome COOP / iframe boundaries can sever window.opener right as OAuth finishes.
-        // Wait briefly to see if Firebase Auth finished signing in via onAuthStateChanged.
         await new Promise((resolve) => setTimeout(resolve, 650));
         if (auth.currentUser) {
           setPopupBlocked(false);
@@ -749,191 +565,31 @@ export default function App() {
 
   const handleSignOut = useCallback(async () => {
     await signOut(auth);
-    setActiveSection('home');
+    setActiveSection('dashboard');
   }, []);
-
-  const handleUpdateProfile = async (payload: {
-    displayName: string;
-    branch: string;
-    semester: string;
-    bio: string;
-  }) => {
-    if (!user || !auth.currentUser) return;
-    await updateProfile(auth.currentUser, { displayName: payload.displayName });
-
-    const patch = {
-      displayName: payload.displayName.slice(0, 80),
-      photoURL: user.photoURL.slice(0, 500),
-      branch: payload.branch.slice(0, 80),
-      semester: payload.semester.slice(0, 32),
-      bio: payload.bio.slice(0, 300),
-      updatedAt: serverTimestamp(),
-    };
-    try {
-      await updateDoc(doc(db, 'users', user.uid, 'public', 'profile'), patch);
-      await updateDoc(doc(db, 'publicProfiles', user.uid), patch);
-      void syncSupabase('/api/supabase/profiles', 'POST', {
-        uid: user.uid,
-        displayName: payload.displayName,
-        photoURL: user.photoURL,
-        branch: payload.branch,
-        semester: payload.semester,
-        bio: payload.bio,
-        role: user.role,
-      });
-      setUser((prev) =>
-        prev
-          ? {
-              ...prev,
-              displayName: payload.displayName,
-              branch: payload.branch,
-              semester: payload.semester,
-              bio: payload.bio,
-            }
-          : prev,
-      );
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}/public/profile`);
-    }
-  };
-
-  const handleChangePassword = async (currentPassword: string, newPassword: string) => {
-    const fbUser = auth.currentUser;
-    if (!fbUser || !fbUser.email) {
-      throw new Error('No signed-in email account found.');
-    }
-    const credential = EmailAuthProvider.credential(fbUser.email, currentPassword);
-    await reauthenticateWithCredential(fbUser, credential);
-    await updatePassword(fbUser, newPassword);
-  };
-
-  const handleSendVerificationEmail = async () => {
-    if (auth.currentUser) {
-      await sendEmailVerification(auth.currentUser);
-    }
-  };
-
-  const handlePrimaryAction = () => {
-    if (!user) {
-      setActiveSection('auth');
-      return;
-    }
-    if (activeSection === 'library' || activeSection === 'subjects') {
-      setActiveSection('upload');
-    } else {
-      setActiveSection('tasks');
-      setShowCreateTaskModal(true);
-    }
-  };
-
-  // Sample Semester Loader
-  const handleLoadSampleSemester = async () => {
-    if (!user) return;
-    const batch = writeBatch(db);
-    const today = Date.now();
-    const iso = (days: number) => new Date(today + days * 86400000).toISOString().slice(0, 10);
-
-    const c1 = makeClientId('crs');
-    const c2 = makeClientId('crs');
-    const c3 = makeClientId('crs');
-
-    batch.set(doc(db, 'courses', c1), {
-      ownerId: user.uid,
-      code: 'CS 301',
-      title: 'Data Structures & Algorithms',
-      instructor: 'Dr. Julian Park',
-      term: user.semester || 'Semester 3',
-      color: '#1D4ED8',
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-    batch.set(doc(db, 'courses', c2), {
-      ownerId: user.uid,
-      code: 'DBMS 304',
-      title: 'Database Management System',
-      instructor: 'Prof. Clara Vance',
-      term: user.semester || 'Semester 3',
-      color: '#0F766E',
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-    batch.set(doc(db, 'courses', c3), {
-      ownerId: user.uid,
-      code: 'AI 402',
-      title: 'Artificial Intelligence & ML',
-      instructor: 'Dr. Elena Rostova',
-      term: user.semester || 'Semester 3',
-      color: '#B45309',
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-
-    batch.set(doc(db, 'tasks', makeClientId('tsk')), {
-      ownerId: user.uid,
-      title: 'Implement Dijkstra & A* Shortest Path Lab',
-      courseId: c1,
-      dueDate: iso(2),
-      priority: 'high',
-      status: 'in_progress',
-      notes: 'Benchmark sparse adjacency lists and upload summary notes to Study Library.',
-      attachmentIds: [],
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-    batch.set(doc(db, 'tasks', makeClientId('tsk')), {
-      ownerId: user.uid,
-      title: 'Normalize ER Diagram to BCNF (Assignment 3)',
-      courseId: c2,
-      dueDate: iso(4),
-      priority: 'high',
-      status: 'todo',
-      notes: 'Include functional dependency closure proofs.',
-      attachmentIds: [],
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-    batch.set(doc(db, 'tasks', makeClientId('tsk')), {
-      ownerId: user.uid,
-      title: 'Train Linear & Logistic Regression Baseline',
-      courseId: c3,
-      dueDate: iso(6),
-      priority: 'medium',
-      status: 'todo',
-      notes: 'Plot validation loss curves and export notebook slides.',
-      attachmentIds: [],
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-
-    try {
-      await batch.commit();
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, 'courses/tasks');
-    }
-  };
 
   // Tasks CRUD
   const handleCreateTask = async (payload: {
     title: string;
-    courseId: string;
+    subject: string;
     dueDate: string;
-    priority: 'low' | 'medium' | 'high';
-    notes: string;
-    attachmentIds: string[];
+    priority: 'high' | 'medium' | 'low';
+    status: 'todo' | 'completed';
   }) => {
     if (!user) return;
     const id = makeClientId('tsk');
-    const cleanCourseId = payload.courseId.replace(/[^a-zA-Z0-9_-]/g, '') || 'general';
+    const cleanSubject = payload.subject.trim().slice(0, 80) || 'General';
     try {
       await setDoc(doc(db, 'tasks', id), {
         ownerId: user.uid,
         title: payload.title.slice(0, 180),
-        courseId: cleanCourseId,
+        courseId: 'general',
+        subject: cleanSubject,
         dueDate: payload.dueDate.slice(0, 20),
         priority: payload.priority,
-        status: 'todo',
-        notes: payload.notes.slice(0, 4000),
-        attachmentIds: payload.attachmentIds.slice(0, 20),
+        status: payload.status,
+        notes: '',
+        attachmentIds: [],
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -941,61 +597,47 @@ export default function App() {
         id,
         ownerId: user.uid,
         title: payload.title.slice(0, 180),
-        courseId: cleanCourseId,
+        courseId: 'general',
+        subject: cleanSubject,
         dueDate: payload.dueDate.slice(0, 20),
         priority: payload.priority,
-        status: 'todo',
-        notes: payload.notes.slice(0, 4000),
-        attachmentIds: payload.attachmentIds.slice(0, 20),
+        status: payload.status,
+        notes: '',
+        attachmentIds: [],
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, `tasks/${id}`);
     }
   };
 
-  const handleUpdateTask = async (id: string, patch: Partial<TaskItem>) => {
-    const existing = tasks.find((t) => t.id === id);
-    if (!existing) return;
-
+  const handleUpdateTask = async (
+    id: string,
+    patch: Partial<Pick<TaskItem, 'title' | 'subject' | 'dueDate' | 'priority' | 'status'>>,
+  ) => {
     const payload: Record<string, unknown> = {
       updatedAt: serverTimestamp(),
     };
     const supaPatch: Record<string, unknown> = {};
 
-    if (existing.status === 'completed' && user?.role !== 'admin') {
-      if (patch.status) {
-        payload.status = patch.status;
-        supaPatch.status = patch.status;
-      }
-    } else {
-      if (typeof patch.title === 'string') {
-        payload.title = patch.title.slice(0, 180);
-        supaPatch.title = payload.title;
-      }
-      if (typeof patch.courseId === 'string') {
-        payload.courseId = patch.courseId;
-        supaPatch.courseId = patch.courseId;
-      }
-      if (typeof patch.dueDate === 'string') {
-        payload.dueDate = patch.dueDate.slice(0, 20);
-        supaPatch.dueDate = payload.dueDate;
-      }
-      if (patch.priority) {
-        payload.priority = patch.priority;
-        supaPatch.priority = patch.priority;
-      }
-      if (patch.status) {
-        payload.status = patch.status;
-        supaPatch.status = patch.status;
-      }
-      if (typeof patch.notes === 'string') {
-        payload.notes = patch.notes.slice(0, 4000);
-        supaPatch.notes = payload.notes;
-      }
-      if (Array.isArray(patch.attachmentIds)) {
-        payload.attachmentIds = patch.attachmentIds.slice(0, 20);
-        supaPatch.attachmentIds = payload.attachmentIds;
-      }
+    if (typeof patch.title === 'string') {
+      payload.title = patch.title.slice(0, 180);
+      supaPatch.title = payload.title;
+    }
+    if (typeof patch.subject === 'string') {
+      payload.subject = patch.subject.slice(0, 80) || 'General';
+      supaPatch.subject = payload.subject;
+    }
+    if (typeof patch.dueDate === 'string') {
+      payload.dueDate = patch.dueDate.slice(0, 20);
+      supaPatch.dueDate = payload.dueDate;
+    }
+    if (patch.priority) {
+      payload.priority = patch.priority;
+      supaPatch.priority = patch.priority;
+    }
+    if (patch.status) {
+      payload.status = patch.status;
+      supaPatch.status = patch.status;
     }
 
     try {
@@ -1015,77 +657,34 @@ export default function App() {
     }
   };
 
-  // Custom Subjects CRUD
-  const handleCreateCustomSubject = async (payload: {
-    name: string;
-    category: string;
-    description: string;
-  }) => {
-    if (!user) return;
-    const id = makeClientId('sub');
-    try {
-      await setDoc(doc(db, 'subjects', id), {
-        ownerId: user.uid,
-        name: payload.name.slice(0, 80),
-        category: payload.category.slice(0, 60),
-        description: payload.description.slice(0, 300),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      void syncSupabase('/api/supabase/subjects', 'POST', {
-        id,
-        ownerId: user.uid,
-        name: payload.name.slice(0, 80),
-        category: payload.category.slice(0, 60),
-        description: payload.description.slice(0, 300),
-      });
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, `subjects/${id}`);
-    }
-  };
-
-  const handleDeleteCustomSubject = async (id: string) => {
-    try {
-      await deleteDoc(doc(db, 'subjects', id));
-      void syncSupabase(`/api/supabase/subjects/${encodeURIComponent(id)}`, 'DELETE');
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `subjects/${id}`);
-    }
-  };
-
-  // Study Materials Upload & Library CRUD
+  // Study Mode File Upload (Admin Only)
   const uploadSingleFileToServer = async (
     file: File,
   ): Promise<UploadedFileResult & { rawBytesForFirestore?: Uint8Array }> => {
-    const CHUNK_THRESHOLD = 12 * 1024 * 1024; // 12 MB
-    const CHUNK_SIZE = 3 * 1024 * 1024; // 3 MB (~4 MB base64, well below Cloud Run 32 MB limit)
+    const CHUNK_THRESHOLD = 12 * 1024 * 1024;
+    const CHUNK_SIZE = 3 * 1024 * 1024;
 
     const fallbackToFirestore = async (): Promise<
       UploadedFileResult & { rawBytesForFirestore?: Uint8Array }
     > => {
-      if (isTextFallbackFile(file) && file.size <= 12000) {
-        const textContent = (await file.text()).slice(0, 12000);
-        return {
-          storedName: file.name,
-          originalName: file.name,
-          mimeType: file.type || 'text/plain',
-          fileType: inferFileType(file.name, file.type || 'text/plain', 'note'),
-          sizeBytes: file.size,
-          contentText: textContent,
-          kind: 'note',
-        };
-      }
       if (file.size > MAX_FIRESTORE_FALLBACK_BYTES) {
         throw new Error(
           `"${file.name}" (${(file.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 15 MB cloud-direct upload limit.`,
         );
       }
       const bytes = new Uint8Array(await file.arrayBuffer());
+      const mimeType =
+        file.type ||
+        (file.name.toLowerCase().endsWith('.pdf')
+          ? 'application/pdf'
+          : file.name.toLowerCase().endsWith('.docx')
+            ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            : 'application/msword');
       return {
         storedName: file.name,
         originalName: file.name,
-        mimeType: file.type || 'application/octet-stream',
-        fileType: inferFileType(file.name, file.type || 'application/octet-stream', 'file'),
+        mimeType,
+        fileType: inferFileType(file.name, mimeType, 'file'),
         sizeBytes: file.size,
         kind: 'file',
         rawBytesForFirestore: bytes,
@@ -1152,7 +751,6 @@ export default function App() {
     };
 
     let parsed = await attemptFormUpload();
-    // Retry once on transient proxy/restart non-JSON or 5xx response (skip wait if 404 from static host)
     if (!parsed.data && parsed.status >= 500) {
       await new Promise((r) => setTimeout(r, 600));
       parsed = await attemptFormUpload();
@@ -1169,190 +767,132 @@ export default function App() {
     return parsed.data.files[0];
   };
 
-  const handleUploadStudyFiles = async (
-    files: FileList,
+  const handleAdminUploadMaterial = async (
+    file: File,
     meta: {
       title: string;
-      description: string;
       subject: string;
-      courseBranch: string;
-      semester: string;
-      topic: string;
+      unit: string;
+      description: string;
     },
-  ): Promise<string[]> => {
-    if (!user) {
-      setActiveSection('auth');
-      return [];
+  ) => {
+    if (!user || user.role !== 'admin') {
+      throw new Error('Only administrators can upload study materials.');
     }
 
-    const uploadedResults: Array<UploadedFileResult & { rawBytesForFirestore?: Uint8Array }> = [];
-    for (let i = 0; i < files.length; i++) {
-      const result = await uploadSingleFileToServer(files[i]);
-      uploadedResults.push(result);
-    }
-
-    const createdIds: string[] = [];
-    for (let i = 0; i < uploadedResults.length; i++) {
-      const f = uploadedResults[i];
-      const id = makeClientId('cnt');
-      const docTitle =
-        uploadedResults.length === 1 && meta.title
-          ? meta.title
-          : i === 0 && meta.title
-            ? `${meta.title} (${i + 1})`
-            : f.originalName;
-      const courseTag = (meta.courseBranch || 'GENERAL').slice(0, 32) || 'GENERAL';
-      const itemKind = f.kind === 'note' ? 'note' : 'file';
-      const resolvedFilePath = f.rawBytesForFirestore
-        ? `firestore://${id}`
-        : f.filePath;
-
-      try {
-        const record: Record<string, unknown> = {
-          ownerId: user.uid,
-          authorName: user.displayName.slice(0, 80),
-          kind: itemKind,
-          title: docTitle.slice(0, 160),
-          description: (meta.description || `Shared file (${f.mimeType})`).slice(0, 1000),
-          courseCode: courseTag,
-          subject: (meta.subject || 'Other Subjects').slice(0, 80),
-          courseBranch: (meta.courseBranch || 'General').slice(0, 80),
-          semester: (meta.semester || 'General').slice(0, 32),
-          topic: (meta.topic || 'General').slice(0, 120),
-          fileType: (f.fileType || inferFileType(f.originalName, f.mimeType, itemKind)).slice(0, 24),
-          originalName: f.originalName.slice(0, 200),
-          mimeType: f.mimeType.slice(0, 120),
-          sizeBytes: f.sizeBytes,
-        };
-        if (resolvedFilePath) {
-          record.filePath = resolvedFilePath.slice(0, 300);
-        }
-        if (typeof f.contentText === 'string') {
-          record.contentText = f.contentText.slice(0, 12000);
-        }
-
-        await setDoc(doc(db, 'publicContents', id), {
-          ...record,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-
-        if (f.rawBytesForFirestore) {
-          try {
-            await uploadBytesToFirestoreChunks(id, user.uid, f.rawBytesForFirestore);
-          } catch (chunkErr) {
-            await deleteDoc(doc(db, 'publicContents', id)).catch(() => undefined);
-            throw chunkErr;
-          }
-        }
-
-        void syncSupabase('/api/supabase/public-contents', 'POST', { id, ...record });
-        createdIds.push(id);
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, `publicContents/${id}`);
-      }
-    }
-    return createdIds;
-  };
-
-  const handleUploadFilesForTask = async (taskId: string, files: FileList) => {
-    const task = tasks.find((t) => t.id === taskId);
-    const course = courses.find((c) => c.id === task?.courseId);
-    const newIds = await handleUploadStudyFiles(files, {
-      title: '',
-      description: task ? `Attached to task: ${task.title}` : 'Task attachment',
-      subject: 'Other Subjects',
-      courseBranch: course?.code ?? (user?.branch || 'General'),
-      semester: user?.semester || 'General',
-      topic: task?.title.slice(0, 80) || 'Assignment',
-    });
-    if (task && newIds.length > 0) {
-      await handleUpdateTask(task.id, {
-        attachmentIds: [...task.attachmentIds, ...newIds].slice(0, 20),
-      });
-    }
-  };
-
-  const handlePublishStudyNote = async (payload: {
-    title: string;
-    description: string;
-    subject: string;
-    courseBranch: string;
-    semester: string;
-    topic: string;
-    contentText: string;
-  }) => {
-    if (!user) return;
+    const f = await uploadSingleFileToServer(file);
     const id = makeClientId('cnt');
-    const courseTag = (payload.courseBranch || 'GENERAL').slice(0, 32) || 'GENERAL';
-    const record = {
+    const resolvedFilePath = f.rawBytesForFirestore ? `firestore://${id}` : f.filePath;
+    const resolvedFileType = inferFileType(f.originalName, f.mimeType, 'file');
+
+    const record: Record<string, unknown> = {
       ownerId: user.uid,
       authorName: user.displayName.slice(0, 80),
-      kind: 'note',
-      title: payload.title.slice(0, 160),
-      description: (payload.description || 'Written educational study note').slice(0, 1000),
-      courseCode: courseTag,
-      subject: (payload.subject || 'Other Subjects').slice(0, 80),
-      courseBranch: (payload.courseBranch || 'General').slice(0, 80),
-      semester: (payload.semester || 'General').slice(0, 32),
-      topic: (payload.topic || 'General').slice(0, 120),
-      fileType: 'NOTE',
-      originalName: `${payload.title.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 140) || 'note'}.md`,
-      mimeType: 'text/markdown',
-      sizeBytes: new Blob([payload.contentText]).size,
-      contentText: payload.contentText.slice(0, 12000),
+      kind: 'file',
+      title: meta.title.slice(0, 160),
+      description: meta.description.slice(0, 1000),
+      courseCode: 'STUDY',
+      subject: meta.subject.slice(0, 80),
+      courseBranch: 'General',
+      semester: 'General',
+      topic: meta.unit.slice(0, 120),
+      fileType: resolvedFileType.slice(0, 24),
+      originalName: f.originalName.slice(0, 200),
+      mimeType: f.mimeType.slice(0, 120),
+      sizeBytes: f.sizeBytes,
     };
+    if (resolvedFilePath) {
+      record.filePath = resolvedFilePath.slice(0, 300);
+    }
+
     try {
       await setDoc(doc(db, 'publicContents', id), {
         ...record,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+
+      if (f.rawBytesForFirestore) {
+        try {
+          await uploadBytesToFirestoreChunks(id, user.uid, f.rawBytesForFirestore);
+        } catch (chunkErr) {
+          await deleteDoc(doc(db, 'publicContents', id)).catch(() => undefined);
+          throw chunkErr;
+        }
+      }
+
       void syncSupabase('/api/supabase/public-contents', 'POST', { id, ...record });
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, `publicContents/${id}`);
     }
   };
 
-  const handleUpdatePublicContent = async (
-    id: string,
-    patch: {
+  const handleAdminUpdateMaterial = async (
+    item: PublicContentItem,
+    meta: {
       title: string;
-      description: string;
       subject: string;
-      courseBranch: string;
-      semester: string;
-      topic: string;
-      contentText?: string;
+      unit: string;
+      description: string;
     },
+    replacementFile?: File | null,
   ) => {
-    const cleanPatch: Record<string, unknown> = {
-      title: patch.title.slice(0, 160),
-      description: patch.description.slice(0, 1000),
-      courseCode: (patch.courseBranch || 'GENERAL').slice(0, 32) || 'GENERAL',
-      subject: patch.subject.slice(0, 80),
-      courseBranch: patch.courseBranch.slice(0, 80),
-      semester: patch.semester.slice(0, 32),
-      topic: patch.topic.slice(0, 120),
+    if (!user || user.role !== 'admin') {
+      throw new Error('Only administrators can edit study materials.');
+    }
+
+    const patch: Record<string, unknown> = {
+      title: meta.title.slice(0, 160),
+      subject: meta.subject.slice(0, 80),
+      topic: meta.unit.slice(0, 120),
+      description: meta.description.slice(0, 1000),
     };
-    if (typeof patch.contentText === 'string') {
-      cleanPatch.contentText = patch.contentText.slice(0, 12000);
+
+    if (replacementFile) {
+      const uploaded = await uploadSingleFileToServer(replacementFile);
+      const newFileType = inferFileType(uploaded.originalName, uploaded.mimeType, 'file');
+
+      if (isFirestoreFilePath(item.filePath)) {
+        invalidateResolvedFileCache(item.filePath);
+        await deleteFirestoreFileChunks(item.id).catch(() => undefined);
+      } else if (item.filePath && item.filePath.startsWith('/api/files/')) {
+        const oldStoredName = item.filePath.replace('/api/files/', '');
+        await fetch(`/api/files/${oldStoredName}`, { method: 'DELETE' }).catch(() => undefined);
+      }
+
+      if (uploaded.rawBytesForFirestore) {
+        await uploadBytesToFirestoreChunks(item.id, user.uid, uploaded.rawBytesForFirestore);
+        patch.filePath = `firestore://${item.id}`;
+      } else if (uploaded.filePath) {
+        patch.filePath = uploaded.filePath.slice(0, 300);
+      }
+
+      patch.fileType = newFileType.slice(0, 24);
+      patch.originalName = uploaded.originalName.slice(0, 200);
+      patch.mimeType = uploaded.mimeType.slice(0, 120);
+      patch.sizeBytes = uploaded.sizeBytes;
     }
 
     try {
-      await updateDoc(doc(db, 'publicContents', id), {
-        ...cleanPatch,
+      await updateDoc(doc(db, 'publicContents', item.id), {
+        ...patch,
         updatedAt: serverTimestamp(),
       });
-      void syncSupabase(`/api/supabase/public-contents/${encodeURIComponent(id)}`, 'PATCH', cleanPatch);
+      void syncSupabase(
+        `/api/supabase/public-contents/${encodeURIComponent(item.id)}`,
+        'PATCH',
+        patch,
+      );
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `publicContents/${id}`);
+      handleFirestoreError(err, OperationType.UPDATE, `publicContents/${item.id}`);
     }
   };
 
-  const handleDeletePublicContent = async (item: PublicContentItem) => {
+  const handleAdminDeleteMaterial = async (item: PublicContentItem) => {
+    if (!user || user.role !== 'admin') return;
     try {
       if (isFirestoreFilePath(item.filePath)) {
+        invalidateResolvedFileCache(item.filePath);
         await deleteFirestoreFileChunks(item.id).catch(() => undefined);
       }
       await deleteDoc(doc(db, 'publicContents', item.id));
@@ -1366,267 +906,81 @@ export default function App() {
     }
   };
 
-  // Time-Travel Booth Save Portrait
-  const handleSavePortrait = async (payload: {
-    imageDataUrl: string;
-    eraId: string;
-    eraLabel: string;
-    eraYear: string;
-    roleTitle: string;
-    caption: string;
-    courseCode: string;
-  }) => {
-    if (!user) return;
-    const id = makeClientId('prt');
-
-    const res = await fetch('/api/files/portrait', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        imageDataUrl: payload.imageDataUrl,
-        eraId: payload.eraId,
-      }),
-    });
-    const parsed = await safeParseJson<{
-      originalName?: string;
-      mimeType?: string;
-      sizeBytes?: number;
-      filePath?: string;
-      error?: string;
-    }>(res);
-
-    let portraitFilePath = parsed.data?.filePath;
-    let originalName = parsed.data?.originalName || `studora-${payload.eraId}.png`;
-    let mimeType = parsed.data?.mimeType || 'image/png';
-    let sizeBytes = parsed.data?.sizeBytes ?? 0;
-    let rawPortraitBytes: Uint8Array | null = null;
-
-    if (!parsed.data || parsed.status === 404) {
-      const match = payload.imageDataUrl.match(/^data:(image\/(?:png|jpeg|webp));base64,(.+)$/);
-      if (!match) {
-        throw new Error('Valid base64 portrait image is required.');
-      }
-      mimeType = match[1];
-      const ext = mimeType === 'image/jpeg' ? 'jpg' : mimeType === 'image/webp' ? 'webp' : 'png';
-      originalName = `studora-${payload.eraId}.${ext}`;
-      const bin = atob(match[2]);
-      const arr = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-      rawPortraitBytes = arr;
-      sizeBytes = arr.byteLength;
-      portraitFilePath = `firestore://${id}`;
-    } else if (!parsed.ok || !portraitFilePath) {
-      throw new Error(parsed.data.error || `Failed to store portrait (HTTP ${parsed.status}).`);
-    }
-
-    const record = {
-      ownerId: user.uid,
-      authorName: user.displayName.slice(0, 80),
-      kind: 'portrait',
-      title: `${payload.eraLabel}${payload.eraYear ? ` (${payload.eraYear})` : ''}`.slice(0, 160),
-      description: (
-        payload.caption || `${payload.roleTitle} in ${payload.eraLabel}`
-      ).slice(0, 1000),
-      courseCode: (payload.courseCode || 'HIST 214').slice(0, 32),
-      subject: 'Other Subjects',
-      courseBranch: (payload.courseCode || 'HIST 214').slice(0, 80),
-      semester: 'General',
-      topic: payload.eraLabel.slice(0, 120),
-      fileType: 'IMAGE',
-      originalName: originalName.slice(0, 200),
-      mimeType: mimeType.slice(0, 120),
-      sizeBytes,
-      filePath: portraitFilePath.slice(0, 300),
-      eraLabel: payload.eraLabel.slice(0, 80),
-    };
-    try {
-      await setDoc(doc(db, 'publicContents', id), {
-        ...record,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      if (rawPortraitBytes) {
-        try {
-          await uploadBytesToFirestoreChunks(id, user.uid, rawPortraitBytes);
-        } catch (chunkErr) {
-          await deleteDoc(doc(db, 'publicContents', id)).catch(() => undefined);
-          throw chunkErr;
-        }
-      }
-      void syncSupabase('/api/supabase/public-contents', 'POST', { id, ...record });
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, `publicContents/${id}`);
-    }
-  };
-
   return (
     <AppShell
       activeSection={activeSection}
       onNavigate={setActiveSection}
       user={user}
-      darkMode={darkMode}
-      onToggleDarkMode={() => setDarkMode((d) => !d)}
       onSignOut={handleSignOut}
-      onPrimaryAction={handlePrimaryAction}
     >
       {authError && (
-        <div className="mx-auto mt-4 max-w-[1440px] px-6">
-          <div className="flex items-center justify-between rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300">
-            <span>{authError}</span>
-            <button
-              type="button"
-              onClick={() => setAuthError(null)}
-              className="font-medium underline"
-            >
-              Dismiss
-            </button>
-          </div>
+        <div className="mb-5 flex items-center justify-between gap-4 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-xs text-red-700">
+          <span>{authError}</span>
+          <button
+            type="button"
+            onClick={() => setAuthError(null)}
+            className="shrink-0 font-semibold underline"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
       {!authReady ? (
-        <div className="mx-auto max-w-[1440px] px-6 py-12">
-          <div className="space-y-4">
-            <div className="h-8 w-64 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-800" />
-            <div className="h-4 w-96 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
-            <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-4">
-              {[0, 1, 2, 3].map((idx) => (
-                <div
-                  key={idx}
-                  className="h-24 animate-pulse rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
-                />
-              ))}
-            </div>
+        <div className="space-y-5">
+          <div className="h-32 animate-pulse rounded-2xl border border-slate-200 bg-white" />
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            {[0, 1, 2, 3].map((idx) => (
+              <div
+                key={idx}
+                className="h-24 animate-pulse rounded-2xl border border-slate-200 bg-white"
+              />
+            ))}
           </div>
         </div>
-      ) : activeSection === 'home' ? (
-        <LandingHome
-          user={user}
-          tasks={tasks}
-          publicContents={publicContents}
-          subjects={allSubjects}
-          onNavigate={setActiveSection}
-          onSelectSubject={(subName) => {
-            setLibrarySubjectFilter(subName);
-            setActiveSection('library');
-          }}
-          onSelectResource={(item) => {
-            setSelectedLibraryResource(item);
-            setActiveSection('library');
-          }}
-        />
       ) : activeSection === 'dashboard' ? (
-        <StudentDashboard
+        <DashboardView
           user={user}
           tasks={tasks}
-          courses={courses}
-          publicContents={publicContents}
+          materials={publicContents}
           onNavigate={setActiveSection}
-          onCreateTaskClick={() => {
+          onOpenNewTask={() => {
             setActiveSection('tasks');
-            setShowCreateTaskModal(true);
+            setOpenAddTaskTrigger((n) => n + 1);
           }}
-          onToggleTaskDone={async (task) => {
+          onOpenUploadContent={() => {
+            setActiveSection('study');
+            setOpenUploadTrigger((n) => n + 1);
+          }}
+          onToggleTaskStatus={async (task) => {
             await handleUpdateTask(task.id, {
               status: task.status === 'completed' ? 'todo' : 'completed',
             });
           }}
+          onReadMaterial={setReadingMaterial}
         />
       ) : activeSection === 'tasks' ? (
         <TaskManagerView
           user={user}
-          courses={courses}
           tasks={tasks}
-          publicContents={publicContents}
-          showCreateModal={showCreateTaskModal}
-          onSetShowCreateModal={setShowCreateTaskModal}
+          openAddTrigger={openAddTaskTrigger}
           onNavigateAuth={() => setActiveSection('auth')}
-          onLoadSampleSemester={handleLoadSampleSemester}
           onCreateTask={handleCreateTask}
           onUpdateTask={handleUpdateTask}
           onDeleteTask={handleDeleteTask}
-          onUploadFilesForTask={handleUploadFilesForTask}
         />
-      ) : activeSection === 'calendar' ? (
-        <CalendarView
+      ) : activeSection === 'study' ? (
+        <StudyModeView
           user={user}
-          tasks={tasks}
-          courses={courses}
+          materials={publicContents}
+          openUploadTrigger={openUploadTrigger}
           onNavigateAuth={() => setActiveSection('auth')}
-          onCreateTaskForDate={handleCreateTask}
-          onToggleTaskDone={async (task) => {
-            await handleUpdateTask(task.id, {
-              status: task.status === 'completed' ? 'todo' : 'completed',
-            });
-          }}
+          onReadMaterial={setReadingMaterial}
+          onAdminUploadMaterial={handleAdminUploadMaterial}
+          onAdminUpdateMaterial={handleAdminUpdateMaterial}
+          onAdminDeleteMaterial={handleAdminDeleteMaterial}
         />
-      ) : activeSection === 'library' ? (
-        <StudyLibraryView
-          mode="public"
-          user={user}
-          publicContents={publicContents}
-          subjects={allSubjects}
-          initialSubjectFilter={librarySubjectFilter}
-          initialSelectedResource={selectedLibraryResource}
-          onClearInitialSelected={() => setSelectedLibraryResource(null)}
-          onNavigate={setActiveSection}
-          onUpdateResource={handleUpdatePublicContent}
-          onDeleteResource={handleDeletePublicContent}
-        />
-      ) : activeSection === 'upload' ? (
-        <UploadMaterialView
-          user={user}
-          subjects={allSubjects}
-          onNavigate={setActiveSection}
-          onCreateCustomSubject={handleCreateCustomSubject}
-          onUploadStudyFiles={async (files, meta) => {
-            await handleUploadStudyFiles(files, meta);
-          }}
-          onPublishStudyNote={handlePublishStudyNote}
-        />
-      ) : activeSection === 'subjects' ? (
-        <ExploreSubjectsView
-          user={user}
-          subjects={allSubjects}
-          publicContents={publicContents}
-          onSelectSubject={(subName) => {
-            setLibrarySubjectFilter(subName);
-            setActiveSection('library');
-          }}
-          onNavigate={setActiveSection}
-          onCreateCustomSubject={handleCreateCustomSubject}
-          onDeleteCustomSubject={handleDeleteCustomSubject}
-        />
-      ) : activeSection === 'my-uploads' ? (
-        <StudyLibraryView
-          mode="mine"
-          user={user}
-          publicContents={publicContents}
-          subjects={allSubjects}
-          onNavigate={setActiveSection}
-          onUpdateResource={handleUpdatePublicContent}
-          onDeleteResource={handleDeletePublicContent}
-        />
-      ) : activeSection === 'profile' ? (
-        <UserProfileView
-          user={user}
-          tasks={tasks}
-          publicContents={publicContents}
-          onNavigate={setActiveSection}
-          onUpdateProfile={handleUpdateProfile}
-          onChangePassword={handleChangePassword}
-          onSendVerificationEmail={handleSendVerificationEmail}
-        />
-      ) : activeSection === 'admin' ? (
-        <AdminDashboardView
-          user={user}
-          publicContents={publicContents}
-          subjects={allSubjects}
-          directoryProfiles={directoryProfiles}
-          onDeleteContent={handleDeletePublicContent}
-          onDeleteCustomSubject={handleDeleteCustomSubject}
-        />
-      ) : activeSection === 'auth' ? (
+      ) : (
         <AuthView
           popupBlocked={popupBlocked}
           popupIssueReason={popupIssueReason}
@@ -1634,18 +988,14 @@ export default function App() {
           onGoogleRedirectSignIn={handleGoogleRedirectSignIn}
           onEmailSignIn={handleEmailSignIn}
           onEmailRegister={handleEmailRegister}
-          onCancel={() => setActiveSection('home')}
-        />
-      ) : (
-        <TimeTravelBooth
-          user={user}
-          courses={courses}
-          publicContents={publicContents}
-          onSignIn={handleGoogleSignIn}
-          onSavePortrait={handleSavePortrait}
-          onDeletePortrait={handleDeletePublicContent}
+          onCancel={() => setActiveSection('dashboard')}
         />
       )}
+
+      <DocumentReaderModal
+        item={readingMaterial}
+        onClose={() => setReadingMaterial(null)}
+      />
     </AppShell>
   );
 }

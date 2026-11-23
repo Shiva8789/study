@@ -18,6 +18,16 @@ export const MAX_FIRESTORE_FALLBACK_BYTES = 15 * 1024 * 1024; // 15 MB max in se
 const resolvedBlobUrlCache = new Map<string, string>();
 const inflightResolutions = new Map<string, Promise<string>>();
 
+export function invalidateResolvedFileCache(filePath?: string): void {
+  if (!filePath) return;
+  const cached = resolvedBlobUrlCache.get(filePath);
+  if (cached) {
+    URL.revokeObjectURL(cached);
+    resolvedBlobUrlCache.delete(filePath);
+  }
+  inflightResolutions.delete(filePath);
+}
+
 export function isFirestoreFilePath(filePath?: string): boolean {
   return Boolean(filePath && filePath.startsWith(FIRESTORE_PREFIX));
 }
