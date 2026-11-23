@@ -187,10 +187,25 @@ export const AuthView: React.FC<AuthViewProps> = ({
             {googleLoading ? 'Completing Google Sign-In...' : 'Continue with Google'}
           </button>
 
+          {!isInIframe && !popupBlocked && (
+            <button
+              type="button"
+              onClick={() => {
+                setError(null);
+                void onGoogleRedirectSignIn().catch((err) =>
+                  setError(err instanceof Error ? err.message : 'Redirect sign-in failed.'),
+                );
+              }}
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100"
+            >
+              Same-Tab Google Sign-In (No Popup)
+            </button>
+          )}
+
           {isInIframe && !popupBlocked && (
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-[11px] text-slate-600 dark:border-slate-800 dark:bg-slate-950/60 dark:text-slate-400">
               <span>
-                Running inside an embedded preview. Keep the Google popup open until it redirects back.
+                Running inside an embedded preview. If the Google popup is blocked, open STUDORA in a full tab.
               </span>
               <a
                 href={currentUrl}
@@ -213,12 +228,12 @@ export const AuthView: React.FC<AuthViewProps> = ({
                 <p className="font-semibold">
                   {popupIssueReason === 'closed'
                     ? 'Google popup closed before completing login'
-                    : 'Google sign-in popup was blocked by your browser'}
+                    : 'Browser blocked the Google sign-in popup'}
                 </p>
                 <p className="mt-1 leading-relaxed text-amber-900/90 dark:text-amber-200/90">
                   {isInIframe
-                    ? 'Your browser or embedded preview frame interrupted the popup before Google could send back your session token. Open STUDORA in a full browser tab to sign in reliably, or retry and wait 2–3 seconds until the window closes automatically.'
-                    : 'Allow popups for this site and wait for the popup to close automatically after choosing your Google account, or use Redirect Sign-In below.'}
+                    ? 'Your embedded preview frame interrupted the popup. Click "Open STUDORA in New Tab" to sign in cleanly, or retry the popup.'
+                    : 'No problem — use Same-Tab Google Sign-In below (no popup needed), or allow popups and retry.'}
                 </p>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   {isInIframe && (
@@ -232,19 +247,6 @@ export const AuthView: React.FC<AuthViewProps> = ({
                       Open STUDORA in New Tab
                     </a>
                   )}
-                  <button
-                    type="button"
-                    disabled={googleLoading}
-                    onClick={triggerGooglePopup}
-                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-60 ${
-                      isInIframe
-                        ? 'border border-amber-300 bg-white text-amber-950 hover:bg-amber-100 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-200 dark:hover:bg-slate-800'
-                        : 'bg-amber-900 text-white hover:bg-amber-800 dark:bg-amber-700 dark:hover:bg-amber-600'
-                    }`}
-                  >
-                    <RefreshCw className="h-3.5 w-3.5" />
-                    Retry Google Popup
-                  </button>
                   {!isInIframe && (
                     <button
                       type="button"
@@ -254,11 +256,20 @@ export const AuthView: React.FC<AuthViewProps> = ({
                           setError(err instanceof Error ? err.message : 'Redirect sign-in failed.'),
                         );
                       }}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-950 hover:bg-amber-100 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-200 dark:hover:bg-slate-800"
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-amber-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-800 dark:bg-amber-700 dark:hover:bg-amber-600"
                     >
-                      Try Redirect Sign-In
+                      Continue with Google (Same Tab)
                     </button>
                   )}
+                  <button
+                    type="button"
+                    disabled={googleLoading}
+                    onClick={triggerGooglePopup}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-950 hover:bg-amber-100 disabled:opacity-60 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-200 dark:hover:bg-slate-800"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Retry Google Popup
+                  </button>
                   <button
                     type="button"
                     onClick={() => emailInputRef.current?.focus()}

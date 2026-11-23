@@ -22,6 +22,8 @@ interface StudyModeViewProps {
   materials: PublicContentItem[];
   openUploadTrigger: number;
   onNavigateAuth: () => void;
+  onGoogleSignIn: () => Promise<void>;
+  onResendVerification: () => Promise<void>;
   onReadMaterial: (item: PublicContentItem) => void;
   onAdminUploadMaterial: (
     file: File,
@@ -77,6 +79,8 @@ export const StudyModeView: React.FC<StudyModeViewProps> = ({
   materials,
   openUploadTrigger,
   onNavigateAuth,
+  onGoogleSignIn,
+  onResendVerification,
   onReadMaterial,
   onAdminUploadMaterial,
   onAdminUpdateMaterial,
@@ -100,6 +104,8 @@ export const StudyModeView: React.FC<StudyModeViewProps> = ({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [verifySent, setVerifySent] = useState(false);
 
   const allLibraryItems = useMemo(
     () => materials.filter((m) => m.kind === 'file' || m.kind === 'note'),
@@ -574,16 +580,26 @@ export const StudyModeView: React.FC<StudyModeViewProps> = ({
                 <p className="mt-1 text-xs leading-relaxed text-slate-600">
                   Any visitor can read and download the{' '}
                   <span className="tabular-nums font-semibold">{libraryCounts.pdfs}</span> available
-                  PDFs above. Sign in with the administrator account to upload new PDF or Word
-                  documents.
+                  PDFs above. Sign in with your administrator Google account to upload new PDF or
+                  Word documents.
                 </p>
-                <div className="mt-4 flex items-center justify-center gap-3">
+                <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5">
                   <button
                     type="button"
-                    onClick={() => setModalOpen(false)}
-                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                    disabled={authBusy}
+                    onClick={() => {
+                      setAuthBusy(true);
+                      if (typeof window !== 'undefined') {
+                        window.sessionStorage.setItem('studora_post_login_section', 'study');
+                      }
+                      void onGoogleSignIn()
+                        .catch(() => undefined)
+                        .finally(() => setAuthBusy(false));
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-[#4F46E5] px-4 py-2 text-xs font-semibold text-white shadow-xs hover:bg-[#4338CA] disabled:opacity-60"
                   >
-                    Close
+                    <LogIn className="h-3.5 w-3.5" />
+                    <span>{authBusy ? 'Signing In...' : 'Continue with Google'}</span>
                   </button>
                   <button
                     type="button"
@@ -591,10 +607,9 @@ export const StudyModeView: React.FC<StudyModeViewProps> = ({
                       setModalOpen(false);
                       onNavigateAuth();
                     }}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-[#4F46E5] px-5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-[#4338CA]"
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-[#1E293B] hover:bg-slate-50"
                   >
-                    <LogIn className="h-3.5 w-3.5" />
-                    <span>Sign In as Admin</span>
+                    More Sign-In Options
                   </button>
                 </div>
               </div>
@@ -606,14 +621,47 @@ export const StudyModeView: React.FC<StudyModeViewProps> = ({
                 </h3>
                 <p className="mt-1 text-xs leading-relaxed text-slate-700">
                   {user.email.toLowerCase() === 'shivac917067@gmail.com' && !user.emailVerified
-                    ? 'Your administrator email is not verified yet. Please verify your email or sign in using "Continue with Google" to enable uploads.'
-                    : `Signed in as ${user.email || user.displayName} (Student). Only the administrator account can upload, edit, or delete Study Mode documents.`}
+                    ? 'Your administrator email (shivac917067@gmail.com) is not verified yet. Continue with Google to verify instantly or click the verification link in your inbox.'
+                    : `Signed in as ${user.email || user.displayName} (Student). Only the administrator account (shivac917067@gmail.com) can upload, edit, or delete Study Mode documents.`}
                 </p>
-                <div className="mt-4 flex justify-center">
+                {verifySent && (
+                  <p className="mt-2 text-xs font-semibold text-green-700">
+                    Verification email sent! Check your inbox and refresh after clicking the link.
+                  </p>
+                )}
+                <div className="mt-4 flex flex-wrap justify-center gap-2.5">
+                  <button
+                    type="button"
+                    disabled={authBusy}
+                    onClick={() => {
+                      setAuthBusy(true);
+                      if (typeof window !== 'undefined') {
+                        window.sessionStorage.setItem('studora_post_login_section', 'study');
+                      }
+                      void onGoogleSignIn()
+                        .catch(() => undefined)
+                        .finally(() => setAuthBusy(false));
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-[#4F46E5] px-4 py-2 text-xs font-semibold text-white hover:bg-[#4338CA] disabled:opacity-60"
+                  >
+                    <LogIn className="h-3.5 w-3.5" />
+                    <span>{authBusy ? 'Signing In...' : 'Sign In with Google'}</span>
+                  </button>
+                  {user.email.toLowerCase() === 'shivac917067@gmail.com' && !user.emailVerified && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void onResendVerification().then(() => setVerifySent(true));
+                      }}
+                      className="rounded-xl border border-orange-300 bg-white px-4 py-2 text-xs font-semibold text-orange-800 hover:bg-orange-100"
+                    >
+                      Resend Verification Email
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setModalOpen(false)}
-                    className="rounded-xl border border-slate-200 bg-white px-5 py-2 text-xs font-semibold text-[#1E293B] hover:bg-slate-50"
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-[#1E293B] hover:bg-slate-50"
                   >
                     Close
                   </button>

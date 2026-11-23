@@ -274,7 +274,17 @@ export default function App() {
       setPopupBlocked(false);
       setPopupIssueReason(null);
       setAuthError(null);
-      setActiveSection('dashboard');
+      const savedTarget =
+        typeof window !== 'undefined'
+          ? window.sessionStorage.getItem('studora_post_login_section')
+          : null;
+      if (savedTarget === 'study') {
+        window.sessionStorage.removeItem('studora_post_login_section');
+        setActiveSection('study');
+        setOpenUploadTrigger((n) => n + 1);
+      } else {
+        setActiveSection('dashboard');
+      }
     }
   }, [user, activeSection]);
 
@@ -286,7 +296,17 @@ export default function App() {
           setPopupBlocked(false);
           setPopupIssueReason(null);
           setAuthError(null);
-          setActiveSection('dashboard');
+          const savedTarget =
+            typeof window !== 'undefined'
+              ? window.sessionStorage.getItem('studora_post_login_section')
+              : null;
+          if (savedTarget === 'study') {
+            window.sessionStorage.removeItem('studora_post_login_section');
+            setActiveSection('study');
+            setOpenUploadTrigger((n) => n + 1);
+          } else {
+            setActiveSection('dashboard');
+          }
         }
       })
       .catch((err) => {
@@ -393,7 +413,7 @@ export default function App() {
     };
   }, [authReady, user?.uid]);
 
-  // Authentication Handlers (UNCHANGED LOGIN SYSTEM)
+  // Authentication Handlers
   const handleGoogleSignIn = useCallback(async () => {
     if (googleSignInLockRef.current) return;
     googleSignInLockRef.current = true;
@@ -401,27 +421,51 @@ export default function App() {
     setPopupBlocked(false);
     setPopupIssueReason(null);
 
+    let inIframe = false;
+    try {
+      inIframe = typeof window !== 'undefined' && window.self !== window.top;
+    } catch {
+      inIframe = true;
+    }
+
     try {
       await signInWithPopup(auth, googleProvider, browserPopupRedirectResolver);
       setPopupBlocked(false);
       setPopupIssueReason(null);
-      setActiveSection('dashboard');
+      if (activeSectionRef.current === 'auth') {
+        const savedTarget =
+          typeof window !== 'undefined'
+            ? window.sessionStorage.getItem('studora_post_login_section')
+            : null;
+        if (savedTarget === 'study') {
+          window.sessionStorage.removeItem('studora_post_login_section');
+          setActiveSection('study');
+          setOpenUploadTrigger((n) => n + 1);
+        } else {
+          setActiveSection('dashboard');
+        }
+      }
     } catch (err) {
       const code = err instanceof FirebaseError ? err.code : '';
 
       if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
-        await new Promise((resolve) => setTimeout(resolve, 650));
+        await new Promise((resolve) => setTimeout(resolve, 900));
         if (auth.currentUser) {
           setPopupBlocked(false);
           setPopupIssueReason(null);
           setAuthError(null);
-          setActiveSection('dashboard');
+          if (activeSectionRef.current === 'auth') {
+            setActiveSection('dashboard');
+          }
           return;
         }
 
         setPopupBlocked(true);
         setPopupIssueReason('closed');
         if (activeSectionRef.current !== 'auth') {
+          if (activeSectionRef.current === 'study' && typeof window !== 'undefined') {
+            window.sessionStorage.setItem('studora_post_login_section', 'study');
+          }
           setActiveSection('auth');
           return;
         }
@@ -429,9 +473,35 @@ export default function App() {
       }
 
       if (code === 'auth/popup-blocked') {
+        // When running in a top-level browser tab, bypass popup blockers automatically using same-tab redirect
+        if (!inIframe) {
+          try {
+            if (activeSectionRef.current === 'study' && typeof window !== 'undefined') {
+              window.sessionStorage.setItem('studora_post_login_section', 'study');
+            }
+            await signInWithRedirect(auth, googleProvider, browserPopupRedirectResolver);
+            return;
+          } catch (redirErr) {
+            setPopupBlocked(true);
+            setPopupIssueReason('blocked');
+            const msg =
+              redirErr instanceof Error
+                ? redirErr.message
+                : 'Popup blocked and redirect sign-in could not start.';
+            setAuthError(msg);
+            if (activeSectionRef.current !== 'auth') {
+              setActiveSection('auth');
+            }
+            return;
+          }
+        }
+
         setPopupBlocked(true);
         setPopupIssueReason('blocked');
         if (activeSectionRef.current !== 'auth') {
+          if (activeSectionRef.current === 'study' && typeof window !== 'undefined') {
+            window.sessionStorage.setItem('studora_post_login_section', 'study');
+          }
           setActiveSection('auth');
           return;
         }
@@ -974,7 +1044,18 @@ export default function App() {
           user={user}
           materials={publicContents}
           openUploadTrigger={openUploadTrigger}
-          onNavigateAuth={() => setActiveSection('auth')}
+          onNavigateAuth={() => {
+            if (typeof window !== 'undefined') {
+              window.sessionStorage.setItem('studora_post_login_section', 'study');
+            }
+            setActiveSection('auth');
+          }}
+          onGoogleSignIn={handleGoogleSignIn}
+          onResendVerification={async () => {
+            if (auth.currentUser) {
+              await sendEmailVerification(auth.currentUser);
+            }
+          }}
           onReadMaterial={setReadingMaterial}
           onAdminUploadMaterial={handleAdminUploadMaterial}
           onAdminUpdateMaterial={handleAdminUpdateMaterial}
